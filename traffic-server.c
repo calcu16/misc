@@ -115,11 +115,17 @@ int main(int argc, char **argv)
 
   /* buffers for the client's host address and name */
   char hostaddr[MAXLINE], hostname[MAXLINE];
+
   /* initializes the semaphore and thread */
   if(sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0)
     fprintf(stderr, "Warning : Unable to initialize thread mechanisms, child processes may not be cleaned up\n");
   else
     threaded = 1;
+
+  if (argc != 2) {
+    fprintf(stderr, "Usage : traffic-server PORT\n");
+    return 1;
+  }
 
   /* opens a socket to listen for connections */
   listenfd = open_socketfd(NULL, argv[1], AI_PASSIVE, &bind);

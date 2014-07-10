@@ -1,7 +1,7 @@
 # Student's Makefile for the CS:APP Data Lab
 SHELL = /bin/sh
 CC = gcc
-CFLAGS = -O -Wall -pedantic
+CFLAGS = -O -Wall -pedantic -Wno-variadic-macros
 LDFLAGS = -lpthread -lrt
 TARGETS = traffic-client traffic-server
 
