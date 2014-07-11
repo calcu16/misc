@@ -40,10 +40,12 @@ struct request_list {
 } NEW_LIST = {NULL, NULL};
 
 struct request_list remove_request(struct request_list list) {
+  struct request_node * oldHead = list.head;
   list.head = list.head->next;
   if (!list.head) {
     list.tail = NULL;
   }
+  free(oldHead);
   return list;
 }
 
