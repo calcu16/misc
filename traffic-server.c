@@ -29,13 +29,50 @@ void* clean(void* v)
   }
 }
 
+struct request_node {
+  size_t seq;
+  uint64_t read_start, read_end;
+  struct request_node *next;
+};
+
+struct request_list {
+  struct request_node *head, *tail;
+} NEW_LIST = {NULL, NULL};
+
+struct request_list remove_request(struct request_list list) {
+  list.head = list.head->next;
+  if (!list.head) {
+    list.tail = NULL;
+  }
+  return list;
+}
+
+struct request_list append_request(struct request_list list, size_t seq, uint64_t readStart, uint64_t readEnd) {
+  struct request_node *node = malloc(sizeof(struct request_node));
+  node->seq = seq;
+  node->read_start = readStart;
+  node->read_end = readEnd;
+  node->next = NULL;
+
+  if (list.tail) {
+    list.tail->next = node;
+    list.tail = node;
+  } else {
+    list.head = list.tail = node;
+  }
+  return list;
+}
+
 int respond(int connfd, size_t port)
 {
   struct setup_header setupBuffer;
-  size_t  n, total_bytes = 0, request_count = 0;
+  struct request_list requests = NEW_LIST;
+  size_t  bytesRead = 0, requestCount = 0, bytesWritten = 0, responseCount = 0;
+  ssize_t n;
+  uint64_t readStart = 0, readEnd, writeStart = 0, writeEnd;
   struct request_header * requestBuffer;
   struct response_header * responseBuffer;
-  fd_set rfds;
+  fd_set rfds, wfds;
 
   if (read(connfd, &setupBuffer, sizeof(struct setup_header)) != sizeof(struct setup_header)) {
     fprintf(stderr, "Failed to read setup from connection on port %lu\n", port);
@@ -46,41 +83,90 @@ int respond(int connfd, size_t port)
 
   requestBuffer = malloc(setupBuffer.request_size);
   responseBuffer = malloc(setupBuffer.response_size);
-  responseBuffer->prev_seq = 0;
+  responseBuffer->prev_write_end = microseconds();
 
-  while (request_count < setupBuffer.requests) {
+  while (responseCount < setupBuffer.requests) {
     FD_ZERO(&rfds);
-    FD_SET(connfd, &rfds);
-
-    select(connfd+1, &rfds, NULL, NULL, NULL);
-
-    if (total_bytes == 0) {
-      printf("%lu server: reading next request\n", microseconds());
-      responseBuffer->read_start = microseconds();
+    if (requestCount < setupBuffer.requests) {
+      FD_SET(connfd, &rfds);
     }
-    printf("%lu server: reading %ld bytes from port %lu\n", microseconds(), setupBuffer.request_size - total_bytes, port);
-    n = read(connfd, requestBuffer, setupBuffer.request_size - total_bytes);
-    responseBuffer->read_end = microseconds();
-    responseBuffer->seq = requestBuffer->seq;
-    if (n == 0) {
-      fprintf(stderr, "Failed to read request from connection on port %lu\n", port);
-      return -1;
+
+    FD_ZERO(&wfds);
+    if (responseCount < requestCount) {
+      FD_SET(connfd, &wfds);
     }
-    printf("%lu server: read %lu bytes from port %lu\n", microseconds(), n, port);
 
-    total_bytes += n;
-    if (total_bytes == setupBuffer.request_size) {
-      printf("%lu server: finished reading request\n", microseconds());
-      total_bytes = 0;
-      responseBuffer->write_start = microseconds();
-      n = write(connfd, responseBuffer, setupBuffer.response_size);
-      responseBuffer->prev_write_end = microseconds();
-      responseBuffer->prev_seq = responseBuffer->seq;
-      printf("%lu server: finished writing request\n", microseconds());
+    printf("%lu server: selecting requests, %lu requests recieved %lu responses written\n", microseconds(), requestCount, responseCount);
+    select(connfd+1, &rfds, &wfds, NULL, NULL);
 
-      if (n != setupBuffer.response_size) {
-        fprintf(stderr, "server: error sending bytes, only sent %lu / %lu\n", n, setupBuffer.response_size);
+    if (FD_ISSET(connfd, &rfds)) {
+      printf("%lu server: reading %ld bytes from port %lu\n", microseconds(), setupBuffer.request_size - bytesRead, port);
+
+      if (bytesRead == 0) {
+        printf("%lu server: reading next request\n", microseconds());
+        readStart = microseconds();
+      }
+
+      n = read(connfd, ((char*)requestBuffer) + bytesRead, setupBuffer.request_size - bytesRead);
+
+      if (n < 0) {
+        perror("read: ");
+        fprintf(stderr, "Failed to read request from connection on port %lu\n", port);
         return -1;
+      }
+      if (n == 0) {
+        fprintf(stderr, "Connection on port %lu closed during read\n", port);
+        return -1;
+      }
+      readEnd = microseconds();
+
+      printf("%lu server: read %lu bytes from port %lu\n", microseconds(), n, port);
+      bytesRead +=n;
+
+      if (bytesRead == setupBuffer.request_size) {
+        printf("%lu server: finished reading request\n", microseconds());
+        requests = append_request(requests, requestBuffer->seq, readStart, readEnd);
+        ++requestCount;
+        bytesRead = 0;
+      }
+    }
+
+    if (FD_ISSET(connfd, &wfds)) {
+      printf("%lu server: writing %ld bytes to port %lu\n", microseconds(), setupBuffer.response_size - bytesRead, port);
+
+      if (bytesWritten == 0) {
+        printf("%lu server: writing next response\n", microseconds());
+        writeStart = microseconds();
+      }
+
+      responseBuffer->seq = requests.head->seq;
+      responseBuffer->read_start = requests.head->read_start;
+      responseBuffer->read_end = requests.head->read_end;
+      responseBuffer->write_start = writeStart;
+
+      n = write(connfd, ((char*)responseBuffer) + bytesWritten, setupBuffer.response_size - bytesWritten);
+
+      if (n < 0) {
+        perror("write: ");
+        fprintf(stderr, "Failed to write request to connection on port %lu\n", port);
+        return -1;
+      }
+      if (n == 0) {
+        fprintf(stderr, "Connection on port %lu closed during write\n", port);
+        return -1;
+      }
+      writeEnd = microseconds();
+
+      printf("%lu server: wrote %lu bytes to port %lu\n", microseconds(), n, port);
+      bytesWritten += n;
+
+      if (bytesWritten == setupBuffer.response_size) {
+        printf("%lu server: finished writing response\n", microseconds());
+        responseBuffer->prev_seq = responseBuffer->seq;
+        responseBuffer->prev_write_end = writeEnd;
+        requests = remove_request(requests);
+        ++responseCount;
+        bytesWritten = 0;
       }
     }
   }

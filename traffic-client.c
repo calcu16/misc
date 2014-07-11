@@ -23,18 +23,19 @@
 /* main driver function */
 int main(int argc, char **argv)
 {
-  char tcp_nodelay = 0, async_requests = 0, wait = 0, *logfilename = NULL;
+  char tcpnodelay = 0, asyncRequests = 0, wait = 0, *logfilename = NULL;
   int clientfd;
-  size_t n = 1, i = 0, delay, lastRequest, delta, requestCount = 0, requests_pending = 0, bytesRead = 0;
+  ssize_t n = 1;
+  size_t i = 0, delay, lastRequest, delta, requestCount = 0, requestsPending = 0, bytesRead = 0, bytesWritten = 0;
   socklen_t addrlen;
-  uint64_t read_start = 0;
+  uint64_t readStart = 0, readEnd, writeStart = 0, writeEnd;
   char *host, *port, addrstr[INET6_ADDRSTRLEN];
   struct setup_header setupBuffer;
   struct request_header * requestBuffer;
   struct response_header * responseBuffer;
   struct timeval timeout;
   struct sockaddr_in addr;
-  fd_set rfds;
+  fd_set rfds, wfds;
   FILE * logfile = NULL;
 
   while (argc >= 3 && argv[1][0] == '-') {
@@ -47,13 +48,13 @@ int main(int argc, char **argv)
       n = 1;
       break;
     case 'n':
-      tcp_nodelay = 1;
+      tcpnodelay = 1;
       break;
     case 'w':
       wait = 1;
       break;
     case 'a':
-      async_requests = 1;
+      asyncRequests = 1;
       break;
     case 'l':
       logfilename = argv[++n];
@@ -122,8 +123,8 @@ int main(int argc, char **argv)
     getchar();
   }
 
-  if (tcp_nodelay) {
-    if(setsockopt(clientfd, IPPROTO_TCP, TCP_NODELAY, (char*)&tcp_nodelay, sizeof(int)) == -1)
+  if (tcpnodelay) {
+    if(setsockopt(clientfd, IPPROTO_TCP, TCP_NODELAY, (char*)&tcpnodelay, sizeof(int)) == -1)
     {
       fprintf(stderr, "Error setting no delay - continuing\n");
     } else {
@@ -134,11 +135,18 @@ int main(int argc, char **argv)
   write(clientfd, &setupBuffer, sizeof(setupBuffer));
 
   lastRequest = 0;
-  while (requestCount < setupBuffer.requests || requests_pending > 0) {
+  while (requestCount < setupBuffer.requests || requestsPending > 0) {
     FD_ZERO(&rfds);
-    FD_SET(clientfd, &rfds);
+
+    if (requestsPending > 0) {
+      FD_SET(clientfd, &rfds);
+    }
 
     delta = microseconds() - lastRequest;
+    FD_ZERO(&wfds);
+    if ((asyncRequests || !requestsPending) && delta > delay) {
+      FD_SET(clientfd, &wfds);
+    }
     if (delta > delay) {
       timeout.tv_sec = 0;
       timeout.tv_usec = 0;
@@ -147,17 +155,20 @@ int main(int argc, char **argv)
       timeout.tv_usec = (delay - delta) % 1000000L;
     }
 
-    LOG(logfile, "%lu client: waiting for input %lu requests pending\n", microseconds(), requests_pending);
-    select(clientfd+1, &rfds, NULL, NULL, (!async_requests && requests_pending) ? NULL : &timeout);
+
+    LOG(logfile, "%lu client: waiting for input, %lu requests pending\n", microseconds(), requestsPending);
+
+    select(clientfd+1, &rfds, &wfds, NULL, (!asyncRequests && requestsPending) ? NULL : &timeout);
 
     if (FD_ISSET(clientfd, &rfds)) {
-      LOG(logfile, "%lu client: recieving bytes\n", microseconds());
+      LOG(logfile, "%lu client: recieving up to %lu bytes\n", microseconds(), setupBuffer.response_size - bytesRead);
       if (!bytesRead) {
-        read_start = microseconds();
+        readStart = microseconds();
       }
-      n = read(clientfd, responseBuffer + bytesRead, setupBuffer.response_size - bytesRead);
+      n = read(clientfd, ((char*)responseBuffer) + bytesRead, setupBuffer.response_size - bytesRead);
       if (n < 0)
       {
+        perror("read: ");
         fprintf(stderr, "Error reading from socket\n");
         break;
       }
@@ -165,32 +176,51 @@ int main(int argc, char **argv)
         LOG(logfile, "%lu client: connection closed\n", microseconds());
         break;
       }
+      readEnd = microseconds();
+
       LOG(logfile, "%lu client: recieved %lu bytes\n", microseconds(), n);
       bytesRead += n;
       if (bytesRead == setupBuffer.response_size) {
-        LOG(logfile, "%lu client: request %lu response read ended at %lu\n", microseconds(), responseBuffer->seq, microseconds());
-        LOG(logfile, "%lu client: request %lu response read started at %lu\n", microseconds(), responseBuffer->seq, read_start);
         LOG(logfile, "%lu client: request %lu response write ended at %lu\n", microseconds(), responseBuffer->prev_seq, responseBuffer->prev_write_end);
         LOG(logfile, "%lu client: request %lu request read started at %lu\n", microseconds(), responseBuffer->seq, responseBuffer->read_start);
         LOG(logfile, "%lu client: request %lu request read ended at %lu\n", microseconds(), responseBuffer->seq, responseBuffer->read_end);
+        LOG(logfile, "%lu client: request %lu response read started at %lu\n", microseconds(), responseBuffer->seq, readStart);
+        LOG(logfile, "%lu client: request %lu response read ended at %lu\n", microseconds(), responseBuffer->seq, readEnd);
         LOG(logfile, "%lu client: request %lu response write started at %lu\n", microseconds(), responseBuffer->seq, responseBuffer->write_start);
-        --requests_pending;
+        --requestsPending;
         bytesRead = 0;
       }
-    } else if (requestCount < setupBuffer.requests) {
-      ++requestCount;
-      requestBuffer->seq = requestCount;
-      LOG(logfile, "%lu client: sending %lu bytes\n", microseconds(), setupBuffer.request_size);
-      LOG(logfile, "%lu client: request %lu request write started at %lu\n", microseconds(), requestCount, microseconds());
-      n = write(clientfd, requestBuffer, setupBuffer.request_size);
+    }
+
+    if (FD_ISSET(clientfd, &wfds)) {
+      LOG(logfile, "%lu client: writing bytes\n", microseconds());
+      requestBuffer->seq = requestCount + 1;
+      if (!bytesWritten) {
+        writeStart = microseconds();
+      }
+      n = write(clientfd, ((char*)requestBuffer) + bytesWritten, setupBuffer.request_size - bytesWritten);
+      if (n < 0) {
+        perror("write: ");
+        fprintf(stderr, "Error writing to socket\n");
+        break;
+      }
       if (n == 0) {
         LOG(logfile, "%lu client: connection closed\n", microseconds());
         break;
       }
-      LOG(logfile, "%lu client: request %lu request write ended at %lu\n", microseconds(), requestCount, microseconds());
-      lastRequest = microseconds();
-      ++requests_pending;
-      LOG(logfile, "%lu client: sent %lu bytes\n", lastRequest, setupBuffer.request_size);
+      writeEnd = microseconds();
+
+      LOG(logfile, "%lu client: sent %lu bytes\n", microseconds(), setupBuffer.request_size);
+      bytesWritten += n;
+      if (bytesWritten == setupBuffer.request_size) {
+        ++requestCount;
+        ++requestsPending;
+        lastRequest = microseconds();
+        bytesWritten = 0;
+
+        LOG(logfile, "%lu client: request %lu request write started at %lu\n", microseconds(), requestCount, writeStart);
+        LOG(logfile, "%lu client: request %lu request write ended at %lu\n", microseconds(), requestCount, writeEnd);
+      }
     }
   }
   close(clientfd);
