@@ -1,5 +1,9 @@
-Traffic
+Misc
 ====
+Miscellaneous scripts and programs
+
+Traffic
+===
 
 Runs traffic between a server and client
 
