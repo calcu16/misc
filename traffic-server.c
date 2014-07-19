@@ -46,7 +46,7 @@ void* clean(void* v)
   }
 }
 
-int respond(int connfd, size_t port)
+int respond(int connfd, size_t port, FILE * logfile, char verbose)
 {
   struct setup_header setupBuffer;
   struct request_list requests = NEW_LIST;
@@ -65,7 +65,7 @@ int respond(int connfd, size_t port)
   }
   write(connfd, &readEnd, sizeof(uint64_t));
 
-  LOG("client %lu sending %lu requests of size %lu expecting responses of size %lu\n", port, setupBuffer.requests, setupBuffer.request_size, setupBuffer.response_size);
+  LOG(logfile, "client %lu sending %lu requests of size %lu expecting responses of size %lu\n", port, setupBuffer.requests, setupBuffer.request_size, setupBuffer.response_size);
 
   requestBuffer = malloc(setupBuffer.request_size);
   responseBuffer = malloc(setupBuffer.response_size);
@@ -207,7 +207,7 @@ int main(int argc, char **argv)
     struct sockaddr_in6 client6;
   } clientaddr;
 
-  if(sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0) {
+  if (sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0) {
     fprintf(stderr, "Warning : Unable to initialize thread mechanisms, child processes may not be cleaned up\n");
   } else {
     threaded = 1;
@@ -224,25 +224,25 @@ int main(int argc, char **argv)
     return error ? error - 1 : 0;
   }
 
+  if (options->logfilename) {
+    logfile = fopen(options->logfilename, "a");
+  }
+
   portstring = options->argv[0];
 
-  /* opens a socket to listen for connections */
   listenfd = open_socketfd(NULL, portstring, AI_PASSIVE, &bind);
 
-  if(listenfd < 0)
-  {
+  if(listenfd < 0) {
     fprintf(stderr, "Error : Cannot listen to socket %s with error %d\n", portstring, listenfd);
     return 1;
   }
-  /* sets the socket */
-  if(setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(optval)) == -1)
-  {
+
+  if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(optval)) == -1) {
     fprintf(stderr, "Error : Unable to set socket options\n");
     return 1;
   }
-  /* sets up listening */
-  if(listen(listenfd, LISTEN_MAX) == -1)
-  {
+
+  if (listen(listenfd, LISTEN_MAX) == -1) {
     fprintf(stderr, "Error : Cannot listen on port\n");
     return 1;
   }
@@ -251,55 +251,47 @@ int main(int argc, char **argv)
   while(1)
   {
     clientlen = sizeof(clientaddr);
-    /* accepts a new connection */
     connfd = accept(listenfd, (void *)(&clientaddr), &clientlen);
-    if(connfd == -1)
+    if (connfd == -1) {
       continue;
-    /* gets the name of the client */
+    }
     error = getnameinfo((struct sockaddr*)&clientaddr, clientlen, hostname, sizeof(hostname), NULL, 0, 0);
-    if(error != 0)
-    {
+    if (error != 0) {
       close(connfd);
       continue;
     }
-    /* gets the numeric address of the client */
     error = getnameinfo((struct sockaddr*)&clientaddr, clientlen, hostaddr, sizeof(hostaddr), NULL, 0, NI_NUMERICHOST);
 
-    /*
-     * the port needs to be converted from network byte order
-     *   decide between ipv4 and ip46
-     */
     port = ntohs(((struct sockaddr*)&clientaddr)->sa_family == AF_INET
             ? ((struct sockaddr_in*)&clientaddr)->sin_port
             : ((struct sockaddr_in6*)&clientaddr)->sin6_port);
-    if(error == 0)
+    if (error == 0) {
       printf("server: connected to %s (%s) : %lu\n", hostname, hostaddr, port);
-    else
+    } else {
       printf("server: server connected to %s : %lu\n", hostname, port);
+    }
 
-    /* forks of a child thread */
-    if((pid = fork()) == 0)
-    {
-      /* child thread */
+    if ((pid = fork()) == 0) {
       close(listenfd);
-      /* commences connection */
       setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, (char*)&tcp_nodelay, sizeof(int));
       respond(connfd, port);
-      printf("server: closing connection to %s (%s) : %lu\n", hostname, hostaddr, port);
+      LOG(logfile, "server: closing connection to %s (%s) : %lu\n", hostname, hostaddr, port);
+      if (logfile) {
+        fclose(logfile);
+      }
       close(connfd);
       exit(0);
     }
     ++total;
-    /* parent thread */
     close(connfd);
-    if(pid > 0)
-    {
-      /* tells the clean up thread there is a new child */
-      if(threaded && sem_post(&count) == -1)
+    if (pid > 0) {
+      if (threaded && sem_post(&count) == -1) {
         fprintf(stderr, "Warning : Semaphore overflow, child processes may not be cleaned up\n");
-      printf("server: forked to pid %d, connection accepted\n", pid);
+      }
+      LOG(logfile, "server: forked to pid %d, connection accepted\n", pid);
     }
-    if(pid == -1)
+    if(pid == -1) {
       fprintf(stderr, "Error : Failed to fork, connection refused\n");
+    }
   }
 }
