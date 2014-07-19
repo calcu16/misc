@@ -68,3 +68,8 @@ int fgets2(FILE* in, char* buf, size_t n)
   }
   return count;
 }
+
+size_t request_find_slot(struct request* requests, size_t seq, size_t expected, size_t size) {
+  for (; requests[last].seq != seq; last = (last + 1) % size) ;
+}
+

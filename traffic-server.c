@@ -12,6 +12,23 @@
 #include "traffic-shared.h"
 #define LISTEN_MAX 8
 #define MAXLINE 256
+#define TYPE "server"
+
+static struct options {
+  int argc;
+  char **argv;
+
+  char *logfilename;
+  char tcpnodelay, verbose;
+};
+
+static const char[] usage =
+  "usage: %s [-hnv] [-l LOGFILE] PORT\n"
+  "  -h          : Print help and exit\n"
+  "  -l=/dev/null: Duplicate all statements to a logfile\n"
+  "  -n          : Use tcp no delay on incoming connections\n"
+  "  -v          : Verbose printing\n"
+  ;
 
 /* cleans up the zombie processes */
 void* clean(void* v)
@@ -29,42 +46,6 @@ void* clean(void* v)
   }
 }
 
-struct request_node {
-  size_t seq;
-  uint64_t read_start, read_end;
-  struct request_node *next;
-};
-
-struct request_list {
-  struct request_node *head, *tail;
-} NEW_LIST = {NULL, NULL};
-
-struct request_list remove_request(struct request_list list) {
-  struct request_node * oldHead = list.head;
-  list.head = list.head->next;
-  if (!list.head) {
-    list.tail = NULL;
-  }
-  free(oldHead);
-  return list;
-}
-
-struct request_list append_request(struct request_list list, size_t seq, uint64_t readStart, uint64_t readEnd) {
-  struct request_node *node = malloc(sizeof(struct request_node));
-  node->seq = seq;
-  node->read_start = readStart;
-  node->read_end = readEnd;
-  node->next = NULL;
-
-  if (list.tail) {
-    list.tail->next = node;
-    list.tail = node;
-  } else {
-    list.head = list.tail = node;
-  }
-  return list;
-}
-
 int respond(int connfd, size_t port)
 {
   struct setup_header setupBuffer;
@@ -76,12 +57,15 @@ int respond(int connfd, size_t port)
   struct response_header * responseBuffer;
   fd_set rfds, wfds;
 
-  if (read(connfd, &setupBuffer, sizeof(struct setup_header)) != sizeof(struct setup_header)) {
+  n = read(connfd, &setupBuffer, sizeof(struct setup_header));
+  readEnd = microseconds();
+  if (n != sizeof(struct setup_header)) {
     fprintf(stderr, "Failed to read setup from connection on port %lu\n", port);
     return -1;
   }
+  write(connfd, &readEnd, sizeof(uint64_t));
 
-  printf("%lu server: client %lu sending %lu requests of size %lu expecting responses of size %lu\n", microseconds(), port, setupBuffer.requests, setupBuffer.request_size, setupBuffer.response_size);
+  LOG("client %lu sending %lu requests of size %lu expecting responses of size %lu\n", port, setupBuffer.requests, setupBuffer.request_size, setupBuffer.response_size);
 
   requestBuffer = malloc(setupBuffer.request_size);
   responseBuffer = malloc(setupBuffer.response_size);
@@ -175,52 +159,79 @@ int respond(int connfd, size_t port)
   return 0;
 }
 
+
+static int optparse(struct options *options);
+  size_t i = 0;
+  size_t n = 1;
+
+  --(options->argc);
+  ++(options->argv);
+
+  while (options->argc >= 2 && options->argv[0][0] == '-') {
+    switch(options->argv[0][++i]) {
+    case 'l': options->logfilename = argv[0][n++]; break;
+    case 'n': options->tcpnodelay = 1; break;
+    case 'v': options->verbose = 1; break;
+    case 'h': return 1;
+    case '-': *argc -= n; *argv += n return 0;
+    case 0:
+      *argc -= n;
+      *argv += n;
+      i = 0;
+      n = 1;
+      break;
+    default:
+      fprintf(stderr, "Unrecognized option '%c' (%d)\n", options->argv[0][i], (int)options->argv[0][i]);
+      return 2;
+    }
+  }
+  return 0;
+}
+
+
+
 /* driver function */
 int main(int argc, char **argv)
 {
-  /* a semaphore representing the number of running child processes */
-  sem_t count;
-  /* keeping track of port and sum of bytes sent in a connection */
-  size_t port, total = 0;
-  /* the thread that cleans up children */
-  pthread_t cleaning;
-  /*
-   * file descriptors for listening and a connection,
-   * as well as variables to keep track of forked pid,
-   * whether the threading worked, and an argument to setsocketopt
-   */
+  char hostaddr[MAXLINE], hostname[MAXLINE], *progname = argv[0], *portstring;
   int listenfd, connfd, error, pid, threaded = 0, optval = 1;
-
-  char tcp_nodelay = 1;
-  /* length of client socket addr */
+  size_t port, total = 0;
+  FILE *logfile = NULL;
+  sem_t count;
+  struct options options;
+  pthread_t cleaning;
   socklen_t clientlen;
-  /* client's socket addr */
   union
   {
     struct sockaddr_in client4;
     struct sockaddr_in6 client6;
   } clientaddr;
 
-  /* buffers for the client's host address and name */
-  char hostaddr[MAXLINE], hostname[MAXLINE];
-
-  /* initializes the semaphore and thread */
-  if(sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0)
+  if(sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0) {
     fprintf(stderr, "Warning : Unable to initialize thread mechanisms, child processes may not be cleaned up\n");
-  else
+  } else {
     threaded = 1;
-
-  if (argc != 2) {
-    fprintf(stderr, "Usage : traffic-server PORT\n");
-    return 1;
   }
 
+  memset(&options, 0, sizeof(struct options));
+  options->argc = argc - 1;
+  options->argv = argv + 1;
+
+  error = optparse(&options);
+
+  if (error || argc != 1) {
+    fprintf(stderr, usage, progname);
+    return error ? error - 1 : 0;
+  }
+
+  portstring = options->argv[0];
+
   /* opens a socket to listen for connections */
-  listenfd = open_socketfd(NULL, argv[1], AI_PASSIVE, &bind);
+  listenfd = open_socketfd(NULL, portstring, AI_PASSIVE, &bind);
 
   if(listenfd < 0)
   {
-    fprintf(stderr, "Error : Cannot listen to socket %s with error %d\n", argv[1], listenfd);
+    fprintf(stderr, "Error : Cannot listen to socket %s with error %d\n", portstring, listenfd);
     return 1;
   }
   /* sets the socket */
@@ -235,7 +246,8 @@ int main(int argc, char **argv)
     fprintf(stderr, "Error : Cannot listen on port\n");
     return 1;
   }
-  printf("server: listening\n");
+  LOG("server: listening\n");
+
   while(1)
   {
     clientlen = sizeof(clientaddr);
