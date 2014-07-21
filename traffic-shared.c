@@ -4,6 +4,8 @@
 #include <netdb.h>
 #include "traffic-shared.h"
 
+char log_level = LOG_LEVEL_L;
+
 uint64_t microseconds(void)
 {
   struct timeval tv;
@@ -69,7 +71,8 @@ int fgets2(FILE* in, char* buf, size_t n)
   return count;
 }
 
-size_t request_find_slot(struct request* requests, size_t seq, size_t expected, size_t size) {
+size_t request_find_slot(struct request* requests, size_t seq, size_t last, size_t size) {
   for (; requests[last].seq != seq; last = (last + 1) % size) ;
+  return last;
 }
 

@@ -14,7 +14,7 @@
 #define MAXLINE 256
 #define TYPE "server"
 
-static struct options {
+struct options {
   int argc;
   char **argv;
 
@@ -22,7 +22,7 @@ static struct options {
   char tcpnodelay, verbose;
 };
 
-static const char[] usage =
+static const char usage[] =
   "usage: %s [-hnv] [-l LOGFILE] PORT\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"

@@ -2,16 +2,21 @@
 #define TRAFFIC_SHARED_H
 #include <stdint.h>
 
-#define LOG(log, msg, ...)                                            \
-  do {                                                                \
-    printf("%lu " TYPE ": " msg, microseconds(), __VA_ARGS__);          \
-    if (log != NULL) {                                                \
-      fprintf(log, "%lu " TYPE ": " msg, microseconds(), __VA_ARGS__,); \
-    }                                                                 \
+#define LOG(log, level, msg, ...)                                         \
+  do {                                                                    \
+    if (level >= log_level) {                                             \
+      printf("%llu " TYPE ": " msg, microseconds(), __VA_ARGS__);         \
+      if (log != NULL) {                                                  \
+        fprintf(log, "%llu " TYPE ": " msg, microseconds(), __VA_ARGS__); \
+      }                                                                   \
+    }                                                                     \
   } while(0)
-#define VERBOSE(log, ...) do { if (debug) LOG(log, __VA_ARGS__); } while(0)
 
-typedef struct _IO_FILE FILE;
+#define LOG_LEVEL_V 0
+#define LOG_LEVEL_L 1 
+#define LOG_LEVEL_Q 2
+extern char log_level;
+
 struct sockaddr;
 
 struct setup_header {
@@ -27,7 +32,7 @@ struct response_header {
 };
 
 
-static struct request {
+struct request {
   size_t seq;
   uint64_t request_write_start, request_write_end, request_read_start, request_read_end;
   uint64_t response_write_start, response_write_end, response_read_start, response_read_end;
