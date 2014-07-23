@@ -72,7 +72,10 @@ int respond(int connfd, size_t port, FILE * logfile)
   responseBuffer = malloc(setupBuffer.response_size);
   requests = calloc(setupBuffer.simul + 1, sizeof(struct request));
 
+  memset(responseBuffer, 0xA0, setupBuffer.response_size);
+
   responseBuffer->prev_seq = 0;
+  responseBuffer->prev_index = 0;
   responseBuffer->prev_write_end = microseconds();
 
   while (!setupBuffer.requests || responseCount < setupBuffer.requests) {
@@ -113,8 +116,9 @@ int respond(int connfd, size_t port, FILE * logfile)
 
       if (bytesRead == setupBuffer.request_size) {
         requests[qt].seq = requestBuffer->seq;
-        LOGF(logfile, LOG_LEVEL_V, "finished read from port %lu saved %lu, %lu, %lu to index %lu\n", port, requests[qt].seq, requests[qt].request_read_start, requests[qt].request_read_end, qt);
-        ++qt;
+        requests[qt].index = requestBuffer->index;
+        LOGF(logfile, LOG_LEVEL_V, "finished read from port %lu saved %lu, %lu, %lu at %lu to index %lu\n", port, requests[qt].seq, requests[qt].request_read_start, requests[qt].request_read_end, requests[qt].index, qt);
+        qt = (qt + 1) % (setupBuffer.simul + 1);
         ++requestCount;
         bytesRead = 0;
       }
@@ -123,10 +127,11 @@ int respond(int connfd, size_t port, FILE * logfile)
     if (FD_ISSET(connfd, &wfds)) {
       if (bytesWritten == 0) {
         responseBuffer->seq = requests[qh].seq;
+        responseBuffer->index = requests[qh].index;
         responseBuffer->read_start = requests[qh].request_read_start;
         responseBuffer->read_end = requests[qh].request_read_end;
         responseBuffer->write_start = microseconds();
-        LOGF(logfile, LOG_LEVEL_V, "starting write to port %lu for %lu reading from index %lu\n", port, responseBuffer->seq, qh);
+        LOGF(logfile, LOG_LEVEL_V, "starting write to port %lu for %lu reading from index %lu to index %lu (previous index %lu)\n", port, responseBuffer->seq, qh, responseBuffer->index, responseBuffer->prev_index);
       }
       n = write(connfd, ((char*)responseBuffer) + bytesWritten, setupBuffer.response_size - bytesWritten);
       writeEnd = microseconds();
@@ -146,13 +151,17 @@ int respond(int connfd, size_t port, FILE * logfile)
 
       if (bytesWritten == setupBuffer.response_size) {
         responseBuffer->prev_seq = responseBuffer->seq;
+        responseBuffer->prev_index = responseBuffer->index;
         responseBuffer->prev_write_end = writeEnd;
-        ++qh;
+        qh = (qh + 1) % (setupBuffer.simul + 1);
         ++responseCount;
         bytesWritten = 0;
       }
     }
   }
+  free(requestBuffer);
+  free(responseBuffer);
+  free(requests);
   return 0;
 }
 
@@ -262,8 +271,8 @@ int main(int argc, char **argv)
     error = getnameinfo((struct sockaddr*)&clientaddr, clientlen, hostaddr, sizeof(hostaddr), NULL, 0, NI_NUMERICHOST);
 
     port = ntohs(((struct sockaddr*)&clientaddr)->sa_family == AF_INET
-            ? ((struct sockaddr_in*)&clientaddr)->sin_port
-            : ((struct sockaddr_in6*)&clientaddr)->sin6_port);
+         ? ((struct sockaddr_in*)&clientaddr)->sin_port
+         : ((struct sockaddr_in6*)&clientaddr)->sin6_port);
     if (error) {
       LOGF(logfile, LOG_LEVEL_L, "connected to %s : %lu\n", hostname, port);
     } else {

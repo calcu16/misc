@@ -34,16 +34,16 @@ struct setup_header {
 };
 
 struct request_header {
-  uint64_t seq;
+  uint64_t seq, index;
 };
 
 struct response_header {
-  uint64_t prev_seq, prev_write_end, seq, read_start, read_end, write_start;
+  uint64_t prev_seq, prev_write_end, prev_index, seq, index, read_start, read_end, write_start;
 };
 
 
 struct request {
-  size_t seq;
+  size_t seq, index;
   uint64_t request_write_start, request_write_end, request_read_start, request_read_end;
   uint64_t response_write_start, response_write_end, response_read_start, response_read_end;
 };

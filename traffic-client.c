@@ -99,7 +99,7 @@ int main(int argc, char **argv)
   int clientfd, error;
   ssize_t n = 1;
   size_t iw = 0, ir = 0, delta, requestCount = 0, responseCount = 0, bytesRead = 0, bytesWritten = 0;
-  uint64_t readStart = 0, readEnd, writeEnd = 0, serverTime, lastRequest = 0;
+  uint64_t readStart = 0, readEnd, writeStart = 0, serverTime, lastRequest = 0;
   int64_t lowerOffset = 1L << 63, upperOffset = ~(1L << 63);
   socklen_t addrlen;
   fd_set rfds, wfds;
@@ -245,11 +245,28 @@ int main(int argc, char **argv)
       if (bytesRead == setupBuffer.response_size) {
         bytesRead = 0;
         ++responseCount;
-        LOGF(logfile, LOG_LEVEL_V, "recieved response prev-seq %lu: %lu, seq %lu: %lu %lu %lu\n", responseBuffer->prev_seq, responseBuffer->prev_write_end, responseBuffer->seq, responseBuffer->read_start, responseBuffer->read_end, responseBuffer->write_start);
+        LOGF(logfile, LOG_LEVEL_V, "recieved response prev-seq %lu: %lu at %ld, seq %lu: %lu %lu %lu at %lu\n",
+            responseBuffer->prev_seq,
+            responseBuffer->prev_write_end,
+            (ssize_t)(responseBuffer->prev_index - 1),
+            responseBuffer->seq,
+            responseBuffer->read_start,
+            responseBuffer->read_end,
+            responseBuffer->write_start,
+            responseBuffer->index - 1
+        );
 
-        if (responseBuffer->prev_seq != 0) {
+        if (responseBuffer->prev_index) {
+          ir = responseBuffer->prev_index - 1;
+          if (ir > setupBuffer.simul) {
+            fprintf(stderr, "Error: previous index %lu is out of range (limit %lu)\n", ir, setupBuffer.simul);
+            break;
+          }
+          if (requests[ir].seq != responseBuffer->prev_seq) {
+            fprintf(stderr, "Error: previous index %lu contains seq %lu (recieved %lu)\n", ir, requests[ir].seq, responseBuffer->prev_seq);
+            break;
+          }
           LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->prev_seq);
-          ir = request_find_slot(requests, responseBuffer->prev_seq, ir, setupBuffer.simul + 1);
           requests[ir].response_write_end = responseBuffer->prev_write_end;
           time_offset(requests[ir].request_write_start, requests[ir].request_read_end, requests[ir].response_write_start, requests[ir].response_read_end, &lowerOffset, &upperOffset);
           LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
@@ -268,9 +285,15 @@ int main(int argc, char **argv)
           requests[ir].seq = 0;
         }
 
-
-        LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->seq);
-        ir = request_find_slot(requests, responseBuffer->seq, ir, setupBuffer.simul + 1);
+        ir = responseBuffer->index - 1;
+        if (ir > setupBuffer.simul) {
+            fprintf(stderr, "Error: index %lu is out of range (limit %lu)\n", ir, setupBuffer.simul);
+            break;
+        }
+        if (requests[ir].seq != responseBuffer->seq) {
+          fprintf(stderr, "Error: index %lu contains seq %lu (recieved %lu)\n", ir, requests[ir].seq, responseBuffer->seq);
+          break;
+        }
         requests[ir].request_read_start = responseBuffer->read_start;
         requests[ir].request_read_end = responseBuffer->read_end;
         requests[ir].response_write_start = responseBuffer->write_start;
@@ -283,6 +306,7 @@ int main(int argc, char **argv)
       if (!bytesWritten) {
         iw = request_find_slot(requests, 0, iw, setupBuffer.simul + 1);
         requestBuffer->seq = requestCount + 1;
+        requestBuffer->index = iw + 1;
         requests[iw].request_write_start = microseconds();
       }
       n = write(clientfd, ((char*)requestBuffer) + bytesWritten, setupBuffer.request_size - bytesWritten);
