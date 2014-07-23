@@ -12,6 +12,9 @@
 #include <sys/types.h>
 #include "traffic-shared.h"
 
+#define TYPE "client"
+#define SWITCH_TWO(a,b) switch(!!(a) << 1 | !!(b))
+
 struct options {
   int argc;
   char **argv;
@@ -21,21 +24,31 @@ struct options {
   char tcpnodelay, *log_level, wait;
 };
 
-
-#define TYPE "client"
-
-#define SWITCH_TWO(a,b) switch(!!(a) << 1 | !!(b))
-
 static const char usage[] =
-  "usage: %s [-hnvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-d DELAY] HOST PORT REQUESTS REQUEST_SIZE RESPONSE_SIZE\n"
-  "  -d          : Delay between consecutive requests\n"
+  "usage: %s [-hnqvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-d DELAY] HOST PORT REQUESTS REQUEST_SIZE RESPONSE_SIZE\n"
+  "  -d=0        : Delay between consecutive requests\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
   "  -n          : Use tcp no delay on outgoing connections\n"
+  "  -q          : Quiet printing\n"
   "  -s=1        : Allow for NUM_SIMUL requests at the same time\n"
   "  -v          : Verbose printing\n"
   "  -w          : Wait for input from stdin after connecting but before sending the normal requests\n"
   ;
+
+static int64_t min(int64_t a, int64_t b) { return a < b ? a : b; }
+static int64_t max(int64_t a, int64_t b) { return a > b ? a : b; }
+
+static int time_offset(uint64_t requestWrite, uint64_t requestRead, uint64_t responseWrite, uint64_t responseRead, int64_t *lowerOffset, int64_t *upperOffset) {
+  uint64_t transit = (responseRead - requestWrite) - (responseWrite - requestRead);
+  int64_t newLowerOffset = min(requestWrite - requestRead, responseRead - responseWrite) - transit;
+  int64_t newUpperOffset = max(requestWrite - requestRead, responseRead - responseWrite) + transit;
+  int ret = ((newLowerOffset > *lowerOffset) << 1) | (newUpperOffset < *upperOffset);
+
+  *lowerOffset = max(*lowerOffset, newLowerOffset);
+  *upperOffset = min(*upperOffset, newUpperOffset);
+  return ret;
+}
 
 static int optparse(struct options *options)
 {
@@ -78,7 +91,7 @@ int main(int argc, char **argv)
   ssize_t n = 1;
   size_t iw = 0, ir = 0, delta, requestCount = 0, responseCount = 0, bytesRead = 0, bytesWritten = 0;
   uint64_t readStart = 0, readEnd, writeEnd = 0, serverTime, lastRequest = 0;
-  int64_t timeOffset;
+  int64_t lowerOffset = 1L << 63, upperOffset = ~(1L << 63);
   socklen_t addrlen;
   fd_set rfds, wfds;
   FILE *logfile = NULL;
@@ -94,10 +107,11 @@ int main(int argc, char **argv)
   options.argc = argc - 1;
   options.argv = argv + 1;
   options.simul = 1;
+  options.log_level = &log_level;
 
   error = optparse(&options);
 
-  if (error || argc != 5) {
+  if (error || options.argc != 5) {
     fprintf(stderr, usage, progname);
     return error ? error - 1 : 0;
   }
@@ -106,20 +120,20 @@ int main(int argc, char **argv)
     logfile = fopen(options.logfilename, "a");
   }
 
-  host = argv[0];
-  port = argv[1];
-  setupBuffer.requests = atol(argv[2]);
-  setupBuffer.request_size = atol(argv[3]);
-  setupBuffer.response_size = atol(argv[4]);
+  host = options.argv[0];
+  port = options.argv[1];
+  setupBuffer.requests = atol(options.argv[2]);
+  setupBuffer.request_size = atol(options.argv[3]);
+  setupBuffer.response_size = atol(options.argv[4]);
   setupBuffer.simul = options.simul;
 
   if (setupBuffer.request_size < sizeof(struct request_header)) {
-    fprintf(stderr, "REQUEST_SIZE must be at least %lu\n", sizeof(struct request_header));
+    fprintf(stderr, "REQUEST_SIZE (%lu) must be at least %lu\n", setupBuffer.request_size, sizeof(struct request_header));
     return 1;
   }
 
   if (setupBuffer.response_size < sizeof(struct response_header)) {
-    fprintf(stderr, "RESPONSE_SIZE must be at least %lu\n", sizeof(struct response_header));
+    fprintf(stderr, "RESPONSE_SIZE (%lu) must be at least %lu\n", setupBuffer.response_size, sizeof(struct response_header));
     return 1;
   }
 
@@ -134,14 +148,14 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  LOG(logfile, LOG_LEVEL_V, "connected\n", NULL);
+  LOG(logfile, LOG_LEVEL_V, "connected\n");
 
   addrlen = sizeof(addr);
   if (getsockname(clientfd, (struct sockaddr*)&addr, (socklen_t*)&addrlen)) {
     fprintf(stderr, "Error getting socket name\n");
   } else {
     inet_ntop(AF_INET, &addr.sin_addr, addrstr, sizeof(addrstr));
-    LOG(logfile, LOG_LEVEL_V, "Connecting from %s:%d\n", addrstr, ntohs(addr.sin_port));
+    LOGF(logfile, LOG_LEVEL_V, "Connecting from %s:%d\n", addrstr, ntohs(addr.sin_port));
   }
 
   addrlen = sizeof(addr);
@@ -149,10 +163,10 @@ int main(int argc, char **argv)
     fprintf(stderr, "Error getting socket name\n");
   } else {
     inet_ntop(AF_INET, &addr.sin_addr, addrstr, sizeof(addrstr));
-    LOG(logfile, LOG_LEVEL_V, "Connecting to %s:%d\n", addrstr, ntohs(addr.sin_port));
+    LOGF(logfile, LOG_LEVEL_V, "Connecting to %s:%d\n", addrstr, ntohs(addr.sin_port));
   }
 
-  if (wait) {
+  if (options.wait) {
     getchar();
   }
 
@@ -161,7 +175,7 @@ int main(int argc, char **argv)
     {
       fprintf(stderr, "Error setting no delay - continuing\n");
     } else {
-      LOG(logfile, LOG_LEVEL_V, "set TCP_NODELAY on socket\n", NULL);
+      LOG(logfile, LOG_LEVEL_V, "set TCP_NODELAY on socket\n");
     }
   }
 
@@ -169,8 +183,9 @@ int main(int argc, char **argv)
   writeEnd = microseconds();
   read(clientfd, &serverTime, sizeof(uint64_t));
   readEnd = microseconds();
-  timeOffset = ((readEnd - serverTime) >> 1) + ((writeEnd - serverTime) >> 1);
-  LOG(logfile, LOG_LEVEL_V, "calculating an offset of %lld +/- %lld\n", timeOffset, readEnd - writeEnd);
+  LOGF(logfile, LOG_LEVEL_V, "initial time offset %lu-%lu-%lu deltas of %ld %ld and transit time %lu\n", writeEnd, serverTime, readEnd, serverTime - writeEnd, readEnd - serverTime, readEnd - writeEnd);
+  time_offset(writeEnd, serverTime, serverTime, readEnd, &lowerOffset, &upperOffset);
+  LOGF(logfile, LOG_LEVEL_V, "calculating an initial offset of +/- %ld %ld\n", lowerOffset, upperOffset);
 
 
   while (responseCount < setupBuffer.requests) {
@@ -193,6 +208,9 @@ int main(int argc, char **argv)
       timeout.tv_sec = (options.delay - delta) / 1000000L;
       timeout.tv_usec = (options.delay - delta) % 1000000L;
       timeout_p = &timeout;
+      break;
+    default:
+      timeout_p = NULL;
     }
 
     select(clientfd+1, &rfds, &wfds, NULL, timeout_p);
@@ -210,7 +228,7 @@ int main(int argc, char **argv)
         break;
       }
       if (n == 0) {
-        LOG(logfile, LOG_LEVEL_V, "connection closed\n", NULL);
+        LOG(logfile, LOG_LEVEL_V, "connection closed\n");
         break;
       }
 
@@ -218,33 +236,44 @@ int main(int argc, char **argv)
       if (bytesRead == setupBuffer.response_size) {
         bytesRead = 0;
         ++responseCount;
+        LOGF(logfile, LOG_LEVEL_V, "recieved response prev-seq %lu: %lu, seq %lu: %lu %lu %lu\n", responseBuffer->prev_seq, responseBuffer->prev_write_end, responseBuffer->seq, responseBuffer->read_start, responseBuffer->read_end, responseBuffer->write_start);
 
-        ir = request_find_slot(requests, responseBuffer->prev_seq, ir, setupBuffer.simul + 1);
-        requests[ir].response_write_end = responseBuffer->prev_write_end;
-        LOG(logfile, LOG_LEVEL_Q, "seq %lu: %llu %llu %llu %llu %llu %llu %llu %llu *%lld\n",
-            requests[ir].seq,
-            requests[ir].request_write_start,
-            requests[ir].request_write_end,
-            requests[ir].request_read_start,
-            requests[ir].request_read_end,
-            requests[ir].response_write_start,
-            requests[ir].response_write_end,
-            requests[ir].response_read_start,
-            requests[ir].response_read_end,
-            timeOffset
-        );
-        requests[ir].seq = 0;
+        if (responseBuffer->prev_seq != 0) {
+          LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->prev_seq);
+          ir = request_find_slot(requests, responseBuffer->prev_seq, ir, setupBuffer.simul + 1);
+          requests[ir].response_write_end = responseBuffer->prev_write_end;
+          time_offset(requests[ir].request_write_end, requests[ir].request_read_end, requests[ir].response_write_end, requests[ir].response_read_end, &lowerOffset, &upperOffset);
+          LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
+              requests[ir].seq,
+              requests[ir].request_write_start,
+              requests[ir].request_write_end,
+              requests[ir].request_read_start,
+              requests[ir].request_read_end,
+              requests[ir].response_write_start,
+              requests[ir].response_write_end,
+              requests[ir].response_read_start,
+              requests[ir].response_read_end,
+              lowerOffset,
+              upperOffset
+          );
+          requests[ir].seq = 0;
+        }
 
+
+        LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->seq);
         ir = request_find_slot(requests, responseBuffer->seq, ir, setupBuffer.simul + 1);
         requests[ir].request_read_start = responseBuffer->read_start;
         requests[ir].request_read_end = responseBuffer->read_end;
         requests[ir].response_write_start = responseBuffer->write_start;
+        requests[ir].response_read_start = readStart;
+        requests[ir].response_read_end = readEnd;
       }
     }
 
     if (FD_ISSET(clientfd, &wfds)) {
       if (!bytesWritten) {
         iw = request_find_slot(requests, 0, iw, setupBuffer.simul + 1);
+        requestBuffer->seq = requestCount + 1;
         requests[iw].request_write_start = microseconds();
       }
       n = write(clientfd, ((char*)requestBuffer) + bytesWritten, setupBuffer.request_size - bytesWritten);
@@ -256,7 +285,7 @@ int main(int argc, char **argv)
         break;
       }
       if (n == 0) {
-        LOG(logfile, LOG_LEVEL_L, "connection closed\n", NULL);
+        LOG(logfile, LOG_LEVEL_L, "connection closed\n");
         break;
       }
 
@@ -264,7 +293,9 @@ int main(int argc, char **argv)
       if (bytesWritten == setupBuffer.request_size) {
         bytesWritten = 0;
         ++requestCount;
+        requests[iw].seq = requestCount;
         lastRequest = requests[iw].request_write_end;
+        LOGF(logfile, LOG_LEVEL_V, "saved %lu, %lu, %lu to index %lu\n", requests[iw].seq, requests[iw].request_write_start, requests[iw].request_write_end, iw);
       }
     }
   }

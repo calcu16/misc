@@ -2,18 +2,28 @@
 #define TRAFFIC_SHARED_H
 #include <stdint.h>
 
-#define LOG(log, level, msg, ...)                                         \
-  do {                                                                    \
-    if (level >= log_level) {                                             \
-      printf("%llu " TYPE ": " msg, microseconds(), __VA_ARGS__);         \
-      if (log != NULL) {                                                  \
-        fprintf(log, "%llu " TYPE ": " msg, microseconds(), __VA_ARGS__); \
-      }                                                                   \
-    }                                                                     \
+#define LOG(log, level, msg)                                                \
+  do {                                                                      \
+    if (level >= log_level) {                                               \
+      printf("%lu " TYPE ": " msg, microseconds());                         \
+      if (log != NULL) {                                                    \
+        fprintf(log, "%lu " TYPE ": " msg, microseconds());                 \
+      }                                                                     \
+    }                                                                       \
+  } while(0)
+
+#define LOGF(log, level, msg, ...)                                          \
+  do {                                                                      \
+    if (level >= log_level) {                                               \
+      printf("%lu " TYPE ": " msg, microseconds(), ## __VA_ARGS__);         \
+      if (log != NULL) {                                                    \
+        fprintf(log, "%lu " TYPE ": " msg, microseconds(), ## __VA_ARGS__); \
+      }                                                                     \
+    }                                                                       \
   } while(0)
 
 #define LOG_LEVEL_V 0
-#define LOG_LEVEL_L 1 
+#define LOG_LEVEL_L 1
 #define LOG_LEVEL_Q 2
 extern char log_level;
 
