@@ -46,6 +46,13 @@ static int time_offset(uint64_t requestWrite, uint64_t requestRead, uint64_t res
   int64_t newUpperOffset = max(requestWrite - requestRead, responseRead - responseWrite) + transit;
   int ret = ((newLowerOffset > *lowerOffset) << 1) | (newUpperOffset < *upperOffset);
 
+  if (newUpperOffset < *lowerOffset || newLowerOffset > *upperOffset) {
+    /* drift */
+    *lowerOffset = newLowerOffset;
+    *upperOffset = newUpperOffset;
+    return 4;
+  }
+
   *lowerOffset = max(*lowerOffset, newLowerOffset);
   *upperOffset = min(*upperOffset, newUpperOffset);
   return ret;
@@ -150,14 +157,14 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  LOG(logfile, LOG_LEVEL_V, "connected\n");
+  LOG(logfile, LOG_LEVEL_L, "connected\n");
 
   addrlen = sizeof(addr);
   if (getsockname(clientfd, (struct sockaddr*)&addr, (socklen_t*)&addrlen)) {
     fprintf(stderr, "Error getting socket name\n");
   } else {
     inet_ntop(AF_INET, &addr.sin_addr, addrstr, sizeof(addrstr));
-    LOGF(logfile, LOG_LEVEL_V, "Connecting from %s:%d\n", addrstr, ntohs(addr.sin_port));
+    LOGF(logfile, LOG_LEVEL_L, "Connected from %s:%d\n", addrstr, ntohs(addr.sin_port));
   }
 
   addrlen = sizeof(addr);
@@ -165,7 +172,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "Error getting socket name\n");
   } else {
     inet_ntop(AF_INET, &addr.sin_addr, addrstr, sizeof(addrstr));
-    LOGF(logfile, LOG_LEVEL_V, "Connecting to %s:%d\n", addrstr, ntohs(addr.sin_port));
+    LOGF(logfile, LOG_LEVEL_L, "Connected to %s:%d\n", addrstr, ntohs(addr.sin_port));
   }
 
   if (options.wait) {
@@ -181,12 +188,12 @@ int main(int argc, char **argv)
     }
   }
 
+  writeStart = microseconds();
   write(clientfd, &setupBuffer, sizeof(setupBuffer));
-  writeEnd = microseconds();
   read(clientfd, &serverTime, sizeof(uint64_t));
   readEnd = microseconds();
-  LOGF(logfile, LOG_LEVEL_V, "initial time offset %lu-%lu-%lu deltas of %ld %ld and transit time %lu\n", writeEnd, serverTime, readEnd, serverTime - writeEnd, readEnd - serverTime, readEnd - writeEnd);
-  time_offset(writeEnd, serverTime, serverTime, readEnd, &lowerOffset, &upperOffset);
+  LOGF(logfile, LOG_LEVEL_V, "initial time offset %lu-%lu-%lu deltas of %ld %ld and transit time %lu\n", writeStart, serverTime, readEnd, serverTime - writeStart, readEnd - serverTime, readEnd - writeStart);
+  time_offset(writeStart, serverTime, serverTime, readEnd, &lowerOffset, &upperOffset);
   LOGF(logfile, LOG_LEVEL_V, "calculating an initial offset of +/- %ld %ld\n", lowerOffset, upperOffset);
 
 
@@ -244,7 +251,7 @@ int main(int argc, char **argv)
           LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->prev_seq);
           ir = request_find_slot(requests, responseBuffer->prev_seq, ir, setupBuffer.simul + 1);
           requests[ir].response_write_end = responseBuffer->prev_write_end;
-          time_offset(requests[ir].request_write_end, requests[ir].request_read_end, requests[ir].response_write_end, requests[ir].response_read_end, &lowerOffset, &upperOffset);
+          time_offset(requests[ir].request_write_start, requests[ir].request_read_end, requests[ir].response_write_start, requests[ir].response_read_end, &lowerOffset, &upperOffset);
           LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
               requests[ir].seq,
               requests[ir].request_write_start,
