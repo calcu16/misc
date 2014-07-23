@@ -15,9 +15,9 @@
 #define LOGF(log, level, msg, ...)                                          \
   do {                                                                      \
     if (level >= log_level) {                                               \
-      printf("%lu " TYPE ": " msg, microseconds(), ## __VA_ARGS__);         \
+      printf("%lu " TYPE ": " msg, microseconds(), __VA_ARGS__);            \
       if (log != NULL) {                                                    \
-        fprintf(log, "%lu " TYPE ": " msg, microseconds(), ## __VA_ARGS__); \
+        fprintf(log, "%lu " TYPE ": " msg, microseconds(), __VA_ARGS__);    \
       }                                                                     \
     }                                                                       \
   } while(0)

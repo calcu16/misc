@@ -75,9 +75,9 @@ int respond(int connfd, size_t port, FILE * logfile)
   responseBuffer->prev_seq = 0;
   responseBuffer->prev_write_end = microseconds();
 
-  while (responseCount < setupBuffer.requests) {
+  while (!setupBuffer.requests || responseCount < setupBuffer.requests) {
     FD_ZERO(&rfds);
-    if (requestCount < setupBuffer.requests) {
+    if (!setupBuffer.requests || requestCount < setupBuffer.requests) {
       FD_SET(connfd, &rfds);
     }
 
@@ -205,6 +205,7 @@ int main(int argc, char **argv)
   } clientaddr;
 
   if (sem_init(&count, 0, 0) == -1 || pthread_create(&cleaning, NULL, clean, &count) != 0) {
+    perror(NULL);
     fprintf(stderr, "Warning : Unable to initialize thread mechanisms, child processes may not be cleaned up\n");
   } else {
     threaded = 1;

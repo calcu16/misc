@@ -19,18 +19,19 @@ struct options {
   int argc;
   char **argv;
 
-  size_t delay, simul;
+  size_t delay, requests, simul;
   char *logfilename;
   char tcpnodelay, *log_level, wait;
 };
 
 static const char usage[] =
-  "usage: %s [-hnqvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-d DELAY] HOST PORT REQUESTS REQUEST_SIZE RESPONSE_SIZE\n"
+  "usage: %s [-hnqvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-r REQUESTS] HOST PORT REQUEST_SIZE RESPONSE_SIZE\n"
   "  -d=0        : Delay between consecutive requests\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
   "  -n          : Use tcp no delay on outgoing connections\n"
   "  -q          : Quiet printing\n"
+  "  -r          : Number of requests to send (default: no limit)\n"
   "  -s=1        : Allow for NUM_SIMUL requests at the same time\n"
   "  -v          : Verbose printing\n"
   "  -w          : Wait for input from stdin after connecting but before sending the normal requests\n"
@@ -57,9 +58,10 @@ static int optparse(struct options *options)
 
   while (options->argc >= 2 && options->argv[0][0] == '-') {
     switch(options->argv[0][++i]) {
-    case 'd': options->delay = atoll(&options->argv[0][n++]); break;
-    case 's': options->simul = atoll(&options->argv[0][n++]); break;
-    case 'l': options->logfilename = &options->argv[0][n++]; break;
+    case 'd': options->delay = atoll(options->argv[n++]); break;
+    case 'r': options->requests = atoll(options->argv[n++]); break;
+    case 's': options->simul = atoll(options->argv[n++]); break;
+    case 'l': options->logfilename = options->argv[n++]; break;
     case 'n': options->tcpnodelay = 1; break;
     case 'w': options->wait = 1; break;
     case 'v': options->log_level[0] = LOG_LEVEL_V; break;
@@ -111,7 +113,7 @@ int main(int argc, char **argv)
 
   error = optparse(&options);
 
-  if (error || options.argc != 5) {
+  if (error || options.argc != 4) {
     fprintf(stderr, usage, progname);
     return error ? error - 1 : 0;
   }
@@ -122,10 +124,10 @@ int main(int argc, char **argv)
 
   host = options.argv[0];
   port = options.argv[1];
-  setupBuffer.requests = atol(options.argv[2]);
-  setupBuffer.request_size = atol(options.argv[3]);
-  setupBuffer.response_size = atol(options.argv[4]);
+  setupBuffer.request_size = atol(options.argv[2]);
+  setupBuffer.response_size = atol(options.argv[3]);
   setupBuffer.simul = options.simul;
+  setupBuffer.requests = options.requests;
 
   if (setupBuffer.request_size < sizeof(struct request_header)) {
     fprintf(stderr, "REQUEST_SIZE (%lu) must be at least %lu\n", setupBuffer.request_size, sizeof(struct request_header));
@@ -188,7 +190,7 @@ int main(int argc, char **argv)
   LOGF(logfile, LOG_LEVEL_V, "calculating an initial offset of +/- %ld %ld\n", lowerOffset, upperOffset);
 
 
-  while (responseCount < setupBuffer.requests) {
+  while (!setupBuffer.requests || responseCount < setupBuffer.requests) {
     FD_ZERO(&rfds);
     if (responseCount < requestCount) {
       FD_SET(clientfd, &rfds);
