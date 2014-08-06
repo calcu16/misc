@@ -19,7 +19,7 @@ struct options {
   char **argv;
 
   char *logfilename;
-  int *tcpquickack, *tcpnodelay;
+  int *tcpquickack, *tcpnodelay, *sopriority;
   char *log_level;
 };
 
@@ -28,13 +28,15 @@ static int option_false = 0;
 char* app_type = "server";
 
 static const char usage[] =
-  "usage: %s [-ahnwv] [-l LOGFILE] PORT\n"
+  "usage: %s [-aAhnNpPqv] [-l LOGFILE] PORT\n"
   "  -a          : Use tcp quick ack on outgoing connections\n"
   "  -A          : Disable tcp quick ack on outgoing connections\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
   "  -n          : Use tcp no delay on outgoing connections\n"
   "  -N          : Do not use tcp no delay on outgoing connections\n"
+  "  -p          : Use SO_PRIORITY on socket\n"
+  "  -P          : Disable SO_PRIORITY on socket\n"
   "  -q          : Quiet printing\n"
   "  -v          : Verbose printing\n"
   ;
@@ -190,6 +192,8 @@ static int optparse(struct options *options)
     case 'A': options->tcpquickack = &option_false; break;
     case 'n': options->tcpnodelay = &option_true; break;
     case 'N': options->tcpnodelay = &option_false; break;
+    case 'p': options->sopriority = &option_true; break;
+    case 'P': options->sopriority = &option_false; break;
     case 'v': options->log_level[0] = LOG_LEVEL_V; break;
     case 'q': options->log_level[0] = LOG_LEVEL_Q; break;
     case 'h': return 1;
@@ -262,6 +266,7 @@ int main(int argc, char **argv)
   }
 
   SETSOCKOPT(logfile, LOG_LEVEL_V, listenfd, SOL_SOCKET, SO_REUSEADDR, &option_true);
+  SETSOCKOPT(logfile, LOG_LEVEL_L, listenfd, SOL_SOCKET, SO_PRIORITY, options.sopriority);
   SETSOCKOPT(logfile, LOG_LEVEL_L, listenfd, IPPROTO_TCP, TCP_NODELAY, options.tcpnodelay);
   SETSOCKOPT(logfile, LOG_LEVEL_L, listenfd, IPPROTO_TCP, TCP_QUICKACK, options.tcpquickack);
 
@@ -279,6 +284,7 @@ int main(int argc, char **argv)
       continue;
     }
 
+    LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, SOL_SOCKET, SO_PRIORITY);
     LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_NODELAY);
     LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_QUICKACK);
 

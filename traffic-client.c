@@ -20,7 +20,7 @@ struct options {
 
   size_t delay, requests, simul;
   char *logfilename;
-  int *tcpquickack, *tcpnodelay;
+  int *tcpquickack, *tcpnodelay, *sopriority;
   char *log_level, wait;
 };
 
@@ -31,10 +31,14 @@ static int option_false = 0;
 static const char usage[] =
   "usage: %s [-hnqvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-r REQUESTS] HOST PORT REQUEST_SIZE RESPONSE_SIZE\n"
   "  -a          : TCP Quick Ack\n"
+  "  -A          : Disable tcp quick ack on outgoing connections\n"
   "  -d=0        : Delay between consecutive requests\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
   "  -n          : Use tcp no delay on outgoing connections\n"
+  "  -N          : Do not use tcp no delay on outgoing connections\n"
+  "  -p          : Use SO_PRIORITY on socket\n"
+  "  -P          : Disable SO_PRIORITY on socket\n"
   "  -q          : Quiet printing\n"
   "  -r          : Number of requests to send (default: no limit)\n"
   "  -s=1        : Allow for NUM_SIMUL requests at the same time\n"
@@ -78,6 +82,8 @@ static int optparse(struct options *options)
     case 'A': options->tcpquickack = &option_false; break;
     case 'n': options->tcpnodelay = &option_true; break;
     case 'N': options->tcpnodelay = &option_false; break;
+    case 'p': options->sopriority = &option_true; break;
+    case 'P': options->sopriority = &option_false; break;
     case 'w': options->wait = 1; break;
     case 'v': options->log_level[0] = LOG_LEVEL_V; break;
     case 'q': options->log_level[0] = LOG_LEVEL_Q; break;
@@ -187,6 +193,7 @@ int main(int argc, char **argv)
     getchar();
   }
 
+  SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, SOL_SOCKET, SO_PRIORITY, options.sopriority);
   SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_NODELAY, options.tcpnodelay);
   SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_QUICKACK, options.tcpquickack);
 
@@ -199,8 +206,9 @@ int main(int argc, char **argv)
   LOGF(logfile, LOG_LEVEL_V, "initial time offset %lu-%lu-%lu deltas of %ld %ld and transit time %lu\n", writeStart, serverTime, readEnd, serverTime - writeStart, readEnd - serverTime, readEnd - writeStart);
   time_offset(writeStart, serverTime, serverTime, readEnd, &lowerOffset, &upperOffset);
   LOGF(logfile, LOG_LEVEL_V, "calculating an initial offset of +/- %ld %ld\n", lowerOffset, upperOffset);
-  LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_NODELAY);
-  LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_QUICKACK);
+  LOGSOCKOPT(logfile, LOG_LEVEL_L, clientfd, SOL_SOCKET, SO_PRIORITY);
+  LOGSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_NODELAY);
+  LOGSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_QUICKACK);
 
 
   while (!setupBuffer.requests || responseCount < setupBuffer.requests) {
