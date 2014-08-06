@@ -12,7 +12,6 @@
 #include <sys/types.h>
 #include "traffic-shared.h"
 
-#define TYPE "client"
 #define SWITCH_TWO(a,b) switch(!!(a) << 1 | !!(b))
 
 struct options {
@@ -21,11 +20,17 @@ struct options {
 
   size_t delay, requests, simul;
   char *logfilename;
-  char tcpnodelay, *log_level, wait;
+  int *tcpquickack, *tcpnodelay;
+  char *log_level, wait;
 };
+
+char *app_type = "client";
+static int option_true = 1;
+static int option_false = 0;
 
 static const char usage[] =
   "usage: %s [-hnqvw] [-d DELAY] [-s NUM_SIMUL] [-l LOGFILE] [-r REQUESTS] HOST PORT REQUEST_SIZE RESPONSE_SIZE\n"
+  "  -a          : TCP Quick Ack\n"
   "  -d=0        : Delay between consecutive requests\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
@@ -69,7 +74,10 @@ static int optparse(struct options *options)
     case 'r': options->requests = atoll(options->argv[n++]); break;
     case 's': options->simul = atoll(options->argv[n++]); break;
     case 'l': options->logfilename = options->argv[n++]; break;
-    case 'n': options->tcpnodelay = 1; break;
+    case 'a': options->tcpquickack = &option_true; break;
+    case 'A': options->tcpquickack = &option_false; break;
+    case 'n': options->tcpnodelay = &option_true; break;
+    case 'N': options->tcpnodelay = &option_false; break;
     case 'w': options->wait = 1; break;
     case 'v': options->log_level[0] = LOG_LEVEL_V; break;
     case 'q': options->log_level[0] = LOG_LEVEL_Q; break;
@@ -179,22 +187,20 @@ int main(int argc, char **argv)
     getchar();
   }
 
-  if (options.tcpnodelay) {
-    if(setsockopt(clientfd, IPPROTO_TCP, TCP_NODELAY, &options.tcpnodelay, sizeof(int)) == -1)
-    {
-      fprintf(stderr, "Error setting no delay - continuing\n");
-    } else {
-      LOG(logfile, LOG_LEVEL_V, "set TCP_NODELAY on socket\n");
-    }
-  }
+  SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_NODELAY, options.tcpnodelay);
+  SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, IPPROTO_TCP, TCP_QUICKACK, options.tcpquickack);
 
   writeStart = microseconds();
   write(clientfd, &setupBuffer, sizeof(setupBuffer));
+
+
   read(clientfd, &serverTime, sizeof(uint64_t));
   readEnd = microseconds();
   LOGF(logfile, LOG_LEVEL_V, "initial time offset %lu-%lu-%lu deltas of %ld %ld and transit time %lu\n", writeStart, serverTime, readEnd, serverTime - writeStart, readEnd - serverTime, readEnd - writeStart);
   time_offset(writeStart, serverTime, serverTime, readEnd, &lowerOffset, &upperOffset);
   LOGF(logfile, LOG_LEVEL_V, "calculating an initial offset of +/- %ld %ld\n", lowerOffset, upperOffset);
+  LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_NODELAY);
+  LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_QUICKACK);
 
 
   while (!setupBuffer.requests || responseCount < setupBuffer.requests) {
@@ -222,6 +228,8 @@ int main(int argc, char **argv)
       timeout_p = NULL;
     }
 
+    LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_NODELAY);
+    LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_QUICKACK);
     select(clientfd+1, &rfds, &wfds, NULL, timeout_p);
 
     if (FD_ISSET(clientfd, &rfds)) {
@@ -240,6 +248,7 @@ int main(int argc, char **argv)
         LOG(logfile, LOG_LEVEL_V, "connection closed\n");
         break;
       }
+      LOGF(logfile, LOG_LEVEL_V, "read %ld bytes from socket\n", n);
 
       bytesRead += n;
       if (bytesRead == setupBuffer.response_size) {
@@ -303,6 +312,7 @@ int main(int argc, char **argv)
     }
 
     if (FD_ISSET(clientfd, &wfds)) {
+      LOGSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_QUICKACK);
       if (!bytesWritten) {
         iw = request_find_slot(requests, 0, iw, setupBuffer.simul + 1);
         requestBuffer->seq = requestCount + 1;
@@ -311,6 +321,8 @@ int main(int argc, char **argv)
       }
       n = write(clientfd, ((char*)requestBuffer) + bytesWritten, setupBuffer.request_size - bytesWritten);
       requests[iw].request_write_end = microseconds();
+
+      SETSOCKOPT(logfile, LOG_LEVEL_V, clientfd, IPPROTO_TCP, TCP_QUICKACK, options.tcpquickack);
 
       if (n < 0) {
         perror("write: ");
@@ -321,6 +333,8 @@ int main(int argc, char **argv)
         LOG(logfile, LOG_LEVEL_L, "connection closed\n");
         break;
       }
+
+      LOGF(logfile, LOG_LEVEL_V, "wrote %ld bytes to socket\n", n);
 
       bytesWritten += n;
       if (bytesWritten == setupBuffer.request_size) {

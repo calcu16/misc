@@ -76,3 +76,37 @@ size_t request_find_slot(struct request* requests, size_t seq, size_t last, size
   return last;
 }
 
+int getintsockopt(int sockfd, int level, int optname) {
+  socklen_t len = sizeof(int);
+  int option, error;
+
+  error = getsockopt(sockfd, level, optname, &option, &len);
+
+  if (error) {
+    return error;
+  }
+  return option;
+}
+
+void setintsockopt(FILE *logfile, int loglevel, int fd, int level, int optname, char *optstring, int *optval) {
+  if (optval) {
+    if (setsockopt(fd, level, optname, optval, sizeof(int)) == -1) {
+      fprintf(stderr, "Error setting socket option %s on %d - continuing\n", optstring, fd);
+    } else {
+      LOGF(logfile, loglevel, "set %s to %d on socket\n", optstring, *optval);
+    }
+  }
+}
+
+void logintsockopt(FILE *logfile, int loglevel, int fd, int level, int optname, char *optstring) {
+  socklen_t len = sizeof(int);
+  int optval, error;
+
+  error = getsockopt(fd, level, optname, &optval, &len);
+  if (error == -1) {
+    fprintf(stderr, "Error getting socket option %s on %d - continuing\n", optstring, fd);
+  } else {
+    LOGF(logfile, loglevel, "%s is set to %d on socket\n", optstring, optval);
+  }
+}
+

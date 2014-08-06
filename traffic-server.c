@@ -13,21 +13,28 @@
 #include "traffic-shared.h"
 #define LISTEN_MAX 8
 #define MAXLINE 256
-#define TYPE "server"
 
 struct options {
   int argc;
   char **argv;
 
   char *logfilename;
-  char tcpnodelay, *log_level;
+  int *tcpquickack, *tcpnodelay;
+  char *log_level;
 };
 
+static int option_true = 1;
+static int option_false = 0;
+char* app_type = "server";
+
 static const char usage[] =
-  "usage: %s [-hnwv] [-l LOGFILE] PORT\n"
+  "usage: %s [-ahnwv] [-l LOGFILE] PORT\n"
+  "  -a          : Use tcp quick ack on outgoing connections\n"
+  "  -A          : Disable tcp quick ack on outgoing connections\n"
   "  -h          : Print help and exit\n"
   "  -l=/dev/null: Duplicate all statements to a logfile\n"
   "  -n          : Use tcp no delay on outgoing connections\n"
+  "  -N          : Do not use tcp no delay on outgoing connections\n"
   "  -q          : Quiet printing\n"
   "  -v          : Verbose printing\n"
   ;
@@ -48,7 +55,7 @@ void* clean(void* v)
   }
 }
 
-int respond(int connfd, size_t port, FILE * logfile)
+int respond(int connfd, size_t port, FILE *logfile, int *tcpquickack)
 {
   struct setup_header setupBuffer;
   size_t  bytesRead = 0, requestCount = 0, bytesWritten = 0, responseCount = 0, qh = 0, qt = 0;
@@ -65,9 +72,11 @@ int respond(int connfd, size_t port, FILE * logfile)
     fprintf(stderr, "Failed to read setup from connection on port %lu\n", port);
     return -1;
   }
+
   write(connfd, &readEnd, sizeof(uint64_t));
   LOGF(logfile, LOG_LEVEL_L, "client %lu sending %lu requests of size %lu expecting responses of size %lu\n", port, setupBuffer.requests, setupBuffer.request_size, setupBuffer.response_size);
-
+  LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_QUICKACK);
+  LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_NODELAY);
   requestBuffer = malloc(setupBuffer.request_size);
   responseBuffer = malloc(setupBuffer.response_size);
   requests = calloc(setupBuffer.simul + 1, sizeof(struct request));
@@ -89,6 +98,8 @@ int respond(int connfd, size_t port, FILE * logfile)
       FD_SET(connfd, &wfds);
     }
 
+    LOGSOCKOPT(logfile, LOG_LEVEL_V, connfd, IPPROTO_TCP, TCP_NODELAY);
+    LOGSOCKOPT(logfile, LOG_LEVEL_V, connfd, IPPROTO_TCP, TCP_QUICKACK);
     LOGF(logfile, LOG_LEVEL_V, "selecting requests, %lu requests recieved %lu responses written\n", requestCount, responseCount);
     select(connfd+1, &rfds, &wfds, NULL, NULL);
 
@@ -136,6 +147,8 @@ int respond(int connfd, size_t port, FILE * logfile)
       n = write(connfd, ((char*)responseBuffer) + bytesWritten, setupBuffer.response_size - bytesWritten);
       writeEnd = microseconds();
 
+      SETSOCKOPT(logfile, LOG_LEVEL_V, connfd, IPPROTO_TCP, TCP_QUICKACK, tcpquickack);
+
       if (n < 0) {
         perror("write: ");
         fprintf(stderr, "Failed to write request to connection on port %lu\n", port);
@@ -173,7 +186,10 @@ static int optparse(struct options *options)
   while (options->argc >= 2 && options->argv[0][0] == '-') {
     switch(options->argv[0][++i]) {
     case 'l': options->logfilename = &options->argv[0][n++]; break;
-    case 'n': options->tcpnodelay = 1; break;
+    case 'a': options->tcpquickack = &option_true; break;
+    case 'A': options->tcpquickack = &option_false; break;
+    case 'n': options->tcpnodelay = &option_true; break;
+    case 'N': options->tcpnodelay = &option_false; break;
     case 'v': options->log_level[0] = LOG_LEVEL_V; break;
     case 'q': options->log_level[0] = LOG_LEVEL_Q; break;
     case 'h': return 1;
@@ -200,7 +216,7 @@ static int optparse(struct options *options)
 int main(int argc, char **argv)
 {
   char hostaddr[MAXLINE], hostname[MAXLINE], *progname = argv[0], *portstring;
-  int listenfd, connfd, error, pid, threaded = 0, optval = 1;
+  int listenfd, connfd, error, pid, threaded = 0;
   size_t port, total = 0;
   FILE *logfile = NULL;
   sem_t count;
@@ -245,10 +261,9 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(optval)) == -1) {
-    fprintf(stderr, "Error : Unable to set socket options\n");
-    return 1;
-  }
+  SETSOCKOPT(logfile, LOG_LEVEL_V, listenfd, SOL_SOCKET, SO_REUSEADDR, &option_true);
+  SETSOCKOPT(logfile, LOG_LEVEL_L, listenfd, IPPROTO_TCP, TCP_NODELAY, options.tcpnodelay);
+  SETSOCKOPT(logfile, LOG_LEVEL_L, listenfd, IPPROTO_TCP, TCP_QUICKACK, options.tcpquickack);
 
   if (listen(listenfd, LISTEN_MAX) == -1) {
     fprintf(stderr, "Error : Cannot listen on port\n");
@@ -263,6 +278,10 @@ int main(int argc, char **argv)
     if (connfd == -1) {
       continue;
     }
+
+    LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_NODELAY);
+    LOGSOCKOPT(logfile, LOG_LEVEL_L, connfd, IPPROTO_TCP, TCP_QUICKACK);
+
     error = getnameinfo((struct sockaddr*)&clientaddr, clientlen, hostname, sizeof(hostname), NULL, 0, 0);
     if (error != 0) {
       close(connfd);
@@ -281,8 +300,7 @@ int main(int argc, char **argv)
 
     if ((pid = fork()) == 0) {
       close(listenfd);
-      setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, (char*)&options.tcpnodelay, sizeof(int));
-      respond(connfd, port, logfile);
+      respond(connfd, port, logfile, options.tcpquickack);
       LOGF(logfile, LOG_LEVEL_L, "server: closing connection to %s (%s) : %lu\n", hostname, hostaddr, port);
       if (logfile) {
         fclose(logfile);
