@@ -1,5 +1,5 @@
 *.o
-traffic-client
-traffic-server
+tcp-client
+tcp-server
 demo
 
