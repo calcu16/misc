@@ -24,7 +24,7 @@ uint64_t rcvd_microseconds(int fd)
   return tv.tv_sec * (uint64_t) 1000000 + tv.tv_usec;
 }
 
-int open_socketfd(char *hostname, char* port, int flags, int (*func)(int, const struct sockaddr*, socklen_t))
+int open_socketfd(char *hostname, char* port, int flags, int type, int (*func)(int, const struct sockaddr*, socklen_t))
 {
   int socketfd;
   struct addrinfo hints, *hostaddresses = NULL;
@@ -35,7 +35,7 @@ int open_socketfd(char *hostname, char* port, int flags, int (*func)(int, const 
   /* indicates an ip4 address */
   hints.ai_family = AF_INET;
   /* looking for a stream connection */
-  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_socktype = type;
   /* asks the DNS server for the address */
   if(getaddrinfo(hostname, port, &hints, &hostaddresses) != 0)
     return -3;
@@ -43,8 +43,11 @@ int open_socketfd(char *hostname, char* port, int flags, int (*func)(int, const 
   if((socketfd = socket(hostaddresses->ai_family, hostaddresses->ai_socktype, hostaddresses->ai_protocol)) == -1)
     return -2;
   /* either binds or connects to the address */
-  if(func(socketfd, hostaddresses->ai_addr, hostaddresses->ai_addrlen) == -1)
-    return -1;
+  if (func) {
+    if(func(socketfd, hostaddresses->ai_addr, hostaddresses->ai_addrlen) == -1) {
+      return -1;
+    }
+  }
   freeaddrinfo(hostaddresses);
   return socketfd;
 }

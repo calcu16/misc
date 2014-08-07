@@ -65,7 +65,7 @@ struct request {
 uint64_t microseconds(void);
 uint64_t rcvd_microseconds(int fd);
 
-int open_socketfd(char *hostname, char* port, int flags, int (*func)(int, const struct sockaddr*, socklen_t));
+int open_socketfd(char *hostname, char* port, int flags, int type, int (*func)(int, const struct sockaddr*, socklen_t));
 void fputs2(FILE* out, char* buf, size_t n);
 int fgets2(FILE* in, char* buf, size_t n);
 

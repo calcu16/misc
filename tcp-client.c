@@ -165,7 +165,7 @@ int main(int argc, char **argv)
   requests = calloc(setupBuffer.simul + 1, sizeof(struct request));
 
   /* looks up server and connects */
-  if((clientfd = open_socketfd(host, port, AI_V4MAPPED, &connect)) < 0)
+  if((clientfd = open_socketfd(host, port, AI_V4MAPPED, SOCK_STREAM, &connect)) < 0)
   {
     fprintf(stderr, "Error connecting to server %d\n", clientfd);
     return 1;

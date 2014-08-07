@@ -260,7 +260,7 @@ int main(int argc, char **argv)
 
   portstring = options.argv[0];
 
-  listenfd = open_socketfd(NULL, portstring, AI_PASSIVE, &bind);
+  listenfd = open_socketfd(NULL, portstring, AI_PASSIVE, SOCK_STREAM, &bind);
 
   if(listenfd < 0) {
     fprintf(stderr, "Error : Cannot listen to socket %s with error %d\n", portstring, listenfd);
