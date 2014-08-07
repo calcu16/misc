@@ -51,18 +51,19 @@ struct request_header {
 };
 
 struct response_header {
-  uint64_t prev_seq, prev_write_end, prev_index, seq, index, read_start, read_end, write_start;
+  uint64_t prev_seq, prev_write_end, prev_index, seq, index, rcvd, read_start, read_end, write_start;
 };
 
 
 struct request {
   size_t seq, index;
-  uint64_t request_write_start, request_write_end, request_read_start, request_read_end;
-  uint64_t response_write_start, response_write_end, response_read_start, response_read_end;
+  uint64_t request_write_start, request_write_end, request_rcvd, request_read_start, request_read_end;
+  uint64_t response_write_start, response_write_end, response_rcvd, response_read_start, response_read_end;
 };
 
 
 uint64_t microseconds(void);
+uint64_t rcvd_microseconds(int fd);
 
 int open_socketfd(char *hostname, char* port, int flags, int (*func)(int, const struct sockaddr*, socklen_t));
 void fputs2(FILE* out, char* buf, size_t n);

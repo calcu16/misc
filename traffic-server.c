@@ -113,6 +113,7 @@ int respond(int connfd, size_t port, FILE *logfile, int *tcpquickack)
       }
       n = read(connfd, ((char*)requestBuffer) + bytesRead, setupBuffer.request_size - bytesRead);
       requests[qt].request_read_end = microseconds();
+      requests[qt].request_rcvd = rcvd_microseconds(connfd);
 
       if (n < 0) {
         perror("read: ");
@@ -130,7 +131,7 @@ int respond(int connfd, size_t port, FILE *logfile, int *tcpquickack)
       if (bytesRead == setupBuffer.request_size) {
         requests[qt].seq = requestBuffer->seq;
         requests[qt].index = requestBuffer->index;
-        LOGF(logfile, LOG_LEVEL_V, "finished read from port %lu saved %lu, %lu, %lu at %lu to index %lu\n", port, requests[qt].seq, requests[qt].request_read_start, requests[qt].request_read_end, requests[qt].index, qt);
+        LOGF(logfile, LOG_LEVEL_V, "finished read from port %lu saved %lu, %lu, %lu, %lu at %lu to index %lu\n", port, requests[qt].seq, requests[qt].request_rcvd, requests[qt].request_read_start, requests[qt].request_read_end, requests[qt].index, qt);
         qt = (qt + 1) % (setupBuffer.simul + 1);
         ++requestCount;
         bytesRead = 0;
@@ -141,6 +142,7 @@ int respond(int connfd, size_t port, FILE *logfile, int *tcpquickack)
       if (bytesWritten == 0) {
         responseBuffer->seq = requests[qh].seq;
         responseBuffer->index = requests[qh].index;
+        responseBuffer->rcvd = requests[qh].request_rcvd;
         responseBuffer->read_start = requests[qh].request_read_start;
         responseBuffer->read_end = requests[qh].request_read_end;
         responseBuffer->write_start = microseconds();
