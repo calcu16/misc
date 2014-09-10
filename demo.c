@@ -239,9 +239,9 @@ main(int argc, char *argv[])
 
 void setperiod(double intervaltime)
 {
+	double intpart, fracpart;
 	if (intervaltime < 0)
 		err(1, "invalid time interval %f", intervaltime);
-	double intpart, fracpart;
 	fracpart = modf(intervaltime, &intpart);
 	period.tv_sec = (int) intpart;
 	period.tv_usec = (int) (fracpart * 1000000.0);
