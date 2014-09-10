@@ -89,11 +89,12 @@ static const char sccsid[] = "@(#)script.c	8.1 (Berkeley) 6/6/93";
 #define __dead2		__attribute__((__noreturn__))
 #endif
 
-FILE	*fscript;
+FILE	*dscript;
 int	master, slave;
 int	child;
 const char *fname;
-int	qflg, ttyflg;
+char	lastKey;
+int	qflg, ttyflg, dflg;
 struct timeval period;
 struct	termios tt;
 
@@ -103,6 +104,7 @@ void	doshell(char **);
 void	fail(void);
 void	finish(void);
 void	usage(void);
+void	writedemottosubprocess(void);
 void	writetosubprocess(const char*, int);
 void	writetouser(const char*, int);
 void	writetolog(const char*, int);
@@ -116,20 +118,18 @@ main(int argc, char *argv[])
 	int cc;
 	struct termios rtt;
 	struct winsize win;
-	int aflg, kflg, ch, n;
+	int kflg, ch, n;
 	struct timeval start, elapsed, timeout, *timeoutp;
-	time_t tvec;
 	char obuf[BUFSIZ];
 	char ibuf[BUFSIZ];
 	fd_set rfd;
 	setperiod(30.0);
 
-	aflg = kflg = 0;
+	kflg = 0;
+	dflg = 1;
+	lastKey = '\r';
 	while ((ch = getopt(argc, argv, "aqkt:")) != -1) {
 		switch(ch) {
-		case 'a':
-			aflg = 1;
-			break;
 		case 'q':
 			qflg = 1;
 			break;
@@ -154,7 +154,7 @@ main(int argc, char *argv[])
 	} else
 		fname = "typescript";
 
-	if ((fscript = fopen(fname, aflg ? "a" : "w")) == NULL)
+	if ((dscript = fopen(fname, "r")) == NULL)
 		err(1, "%s", fname);
 
 	if ((ttyflg = isatty(STDIN_FILENO))) {
@@ -170,10 +170,7 @@ main(int argc, char *argv[])
 	}
 
 	if (!qflg) {
-		tvec = time(NULL);
-		(void)printf("Script started, output file is %s\n", fname);
-		(void)fprintf(fscript, "Script started on %s", ctime(&tvec));
-		fflush(fscript);
+		(void)printf("Demo started, input file is %s\n", fname);
 	}
 	if (ttyflg) {
 		rtt = tt;
@@ -247,13 +244,33 @@ void setperiod(double intervaltime)
 	period.tv_usec = (int) (fracpart * 1000000.0);
 }
 
+void
+writedemotosubprocess(void)
+{
+	int value;
+	char temp;
+	if (dflg) {
+		while ((value = getc(dscript)) != EOF && value != '\n') {
+			temp = (char)value;
+			(void)write(master, &temp, 1);
+		}
+		dflg = value != EOF;
+	}
+}
 
 void
 writetosubprocess(const char* buf, int cc)
 {
+        int i;
 	if (cc <= 0)
 	       return;
-	(void)write(master, buf, cc);
+        for (i = 0; i < cc; ++i) {
+        	if (lastKey == '\r' && buf[i] == '\r') {
+        		writedemotosubprocess();
+        	}
+		lastKey = buf[i];
+        	(void)write(master, buf + i, 1);
+        }
 }
 
 
@@ -269,14 +286,16 @@ writetouser(const char* buf, int cc)
 void
 writetolog(const char* buf, int cc)
 {
-	(void)fwrite(buf, 1, cc, fscript);
+	(void)buf;
+	(void)cc;
+	/* (void)fwrite(buf, 1, cc, dscript); */
 }
 
 
 void
 flushlog(void)
 {
-	fflush(fscript);
+	/* fflush(dscript); */
 }
 
 
@@ -299,7 +318,7 @@ void
 usage(void)
 {
 	(void)fprintf(stderr,
-	    "usage: script [-akq] [-t time] [file [command ...]]\n");
+	    "usage: demo [-akq] [-t time] [file [command ...]]\n");
 	exit(1);
 }
 
@@ -337,7 +356,7 @@ doshell(char **av)
 		shell = _PATH_BSHELL;
 
 	(void)close(master);
-	(void)fclose(fscript);
+	(void)fclose(dscript);
 	login_tty(slave);
 	if (av[0]) {
 		execvp(av[0], av);
@@ -361,19 +380,13 @@ fail(void)
 void
 done(int eno)
 {
-	time_t tvec;
-
 	if (ttyflg)
 		(void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &tt);
-	if (fscript) {
-		tvec = time(NULL);
+	if (dscript) {
 		if (!qflg) {
-			(void)fprintf(fscript,
-					"\nScript done on %s", ctime(&tvec));
-			(void)printf("\nScript done, output file is %s\n",
-					fname);
+			(void)printf("\nDemo done");
 		}
-		(void)fclose(fscript);
+		(void)fclose(dscript);
 	}
 	if (master)
 		(void)close(master);
