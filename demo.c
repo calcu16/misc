@@ -107,9 +107,6 @@ void	usage(void);
 void	writedemottosubprocess(void);
 void	writetosubprocess(const char*, int);
 void	writetouser(const char*, int);
-void	writetolog(const char*, int);
-void	periodic(void);
-bool	isechoing(void);
 void	setperiod(double);
 
 int
@@ -118,23 +115,19 @@ main(int argc, char *argv[])
 	int cc;
 	struct termios rtt;
 	struct winsize win;
-	int kflg, ch, n;
+	int ch, n;
 	struct timeval start, elapsed, timeout, *timeoutp;
 	char obuf[BUFSIZ];
 	char ibuf[BUFSIZ];
 	fd_set rfd;
 	setperiod(30.0);
 
-	kflg = 0;
 	dflg = 1;
 	lastKey = '\r';
 	while ((ch = getopt(argc, argv, "aqkt:")) != -1) {
 		switch(ch) {
 		case 'q':
 			qflg = 1;
-			break;
-		case 'k':
-			kflg = 1;
 			break;
 		case 't':
 			setperiod(atof(optarg));
@@ -151,8 +144,9 @@ main(int argc, char *argv[])
 		fname = argv[0];
 		argv++;
 		argc--;
-	} else
-		fname = "typescript";
+	} else {
+		usage();
+	}
 
 	if ((dscript = fopen(fname, "r")) == NULL)
 		err(1, "%s", fname);
@@ -206,21 +200,16 @@ main(int argc, char *argv[])
 		if (n > 0 && FD_ISSET(STDIN_FILENO, &rfd)) {
 			cc = read(STDIN_FILENO, ibuf, BUFSIZ);
 			writetosubprocess(ibuf, cc);
-			if (kflg && !isechoing()) {
-				writetolog(ibuf, cc);
-			}
 		}
 		if (n > 0 && FD_ISSET(master, &rfd)) {
 			cc = read(master, obuf, sizeof (obuf));
 			if (cc <= 0)
 				break;
 			writetouser(obuf, cc);
-			writetolog(obuf, cc);
 		}
 		gettimeofday(&elapsed, NULL);
 		timersub(&elapsed, &start, &elapsed);
 		if (timercmp(&elapsed, &timeout, >)) {
-			periodic();
 			timeout = period;
 		} else {
 			timersub(&timeout, &elapsed, &timeout);
@@ -280,37 +269,6 @@ writetouser(const char* buf, int cc)
 	if (cc <= 0)
 	       return;
 	(void)write(STDOUT_FILENO, buf, cc);
-}
-
-
-void
-writetolog(const char* buf, int cc)
-{
-	(void)buf;
-	(void)cc;
-	/* (void)fwrite(buf, 1, cc, dscript); */
-}
-
-
-void
-flushlog(void)
-{
-	/* fflush(dscript); */
-}
-
-
-bool
-isechoing()
-{
-	struct termios stt;
-	return tcgetattr(master, &stt) >= 0 && ((stt.c_lflag & ECHO) != 0);
-}
-
-
-void
-periodic(void)
-{
-	flushlog();
 }
 
 
@@ -384,7 +342,7 @@ done(int eno)
 		(void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &tt);
 	if (dscript) {
 		if (!qflg) {
-			(void)printf("\nDemo done");
+			(void)printf("\nDemo done\n");
 		}
 		(void)fclose(dscript);
 	}
