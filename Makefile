@@ -3,7 +3,7 @@ SHELL = /bin/sh
 CC = gcc
 CFLAGS = -O -Wall -pedantic -Wno-variadic-macros -Wno-format -Wno-overlength-strings
 LDFLAGS = -lpthread
-TARGETS = tcp-client tcp-serve demo
+TARGETS = tcp-client tcp-server demo
 
 all: $(TARGETS)
 tcp-client: tcp-client.o traffic-shared.o
