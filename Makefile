@@ -2,7 +2,7 @@
 SHELL = /bin/sh
 CC = gcc
 CFLAGS = -O -Wall -pedantic -Wno-variadic-macros -Wno-format -Wno-overlength-strings
-LDFLAGS = -lpthread
+LDFLAGS = -lpthread -lutil
 TARGETS = tcp-client tcp-server demo
 
 all: $(TARGETS)
