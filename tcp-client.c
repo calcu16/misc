@@ -10,7 +10,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include "traffic-shared.h"
+#include "tcp-shared.h"
 
 #define SWITCH_TWO(a,b) switch(!!(a) << 1 | !!(b))
 
@@ -113,7 +113,7 @@ int main(int argc, char **argv)
   int clientfd, error;
   ssize_t n = 1;
   size_t iw = 0, ir = 0, delta, requestCount = 0, responseCount = 0, bytesRead = 0, bytesWritten = 0;
-  uint64_t rcvd = 0, readStart = 0, readEnd, writeStart = 0, serverTime, lastRequest = 0;
+  uint64_t readStart = 0, readEnd, writeStart = 0, serverTime, lastRequest = 0;
   int64_t lowerOffset = 1L << 63, upperOffset = ~(1L << 63);
   socklen_t addrlen;
   fd_set rfds, wfds;
@@ -246,7 +246,6 @@ int main(int argc, char **argv)
       }
       n = read(clientfd, ((char*)responseBuffer) + bytesRead, setupBuffer.response_size - bytesRead);
       readEnd = microseconds();
-      rcvd = rcvd_microseconds(clientfd);
       if (n < 0)
       {
         perror("read: ");
@@ -287,16 +286,14 @@ int main(int argc, char **argv)
           LOGF(logfile, LOG_LEVEL_V, "finding slot for %lu\n", responseBuffer->prev_seq);
           requests[ir].response_write_end = responseBuffer->prev_write_end;
           time_offset(requests[ir].request_write_start, requests[ir].request_read_end, requests[ir].response_write_start, requests[ir].response_read_end, &lowerOffset, &upperOffset);
-          LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
+          LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
               requests[ir].seq,
               requests[ir].request_write_start,
               requests[ir].request_write_end,
-              requests[ir].request_rcvd,
               requests[ir].request_read_start,
               requests[ir].request_read_end,
               requests[ir].response_write_start,
               requests[ir].response_write_end,
-              requests[ir].response_rcvd,
               requests[ir].response_read_start,
               requests[ir].response_read_end,
               lowerOffset,
@@ -314,11 +311,9 @@ int main(int argc, char **argv)
           fprintf(stderr, "Error: index %lu contains seq %lu (recieved %lu)\n", ir, requests[ir].seq, responseBuffer->seq);
           break;
         }
-        requests[ir].request_rcvd = responseBuffer->rcvd;
         requests[ir].request_read_start = responseBuffer->read_start;
         requests[ir].request_read_end = responseBuffer->read_end;
         requests[ir].response_write_start = responseBuffer->write_start;
-        requests[ir].response_rcvd = rcvd;
         requests[ir].response_read_start = readStart;
         requests[ir].response_read_end = readEnd;
       }

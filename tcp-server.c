@@ -10,7 +10,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include "traffic-shared.h"
+#include "tcp-shared.h"
 #define LISTEN_MAX 8
 #define MAXLINE 256
 
@@ -113,7 +113,6 @@ int respond(int connfd, size_t port, FILE *logfile, int *tcpquickack)
       }
       n = read(connfd, ((char*)requestBuffer) + bytesRead, setupBuffer.request_size - bytesRead);
       requests[qt].request_read_end = microseconds();
-      requests[qt].request_rcvd = rcvd_microseconds(connfd);
 
       if (n < 0) {
         perror("read: ");

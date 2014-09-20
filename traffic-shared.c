@@ -14,16 +14,6 @@ uint64_t microseconds(void)
   return tv.tv_sec * (uint64_t) 1000000 + tv.tv_usec;
 }
 
-uint64_t rcvd_microseconds(int fd)
-{
-  struct timeval tv;
-  memset(&tv, 0, sizeof(tv));
-  if (ioctl(fd, SIOCGSTAMP, &tv) == -1) {
-    perror("ioctl");
-  }
-  return tv.tv_sec * (uint64_t) 1000000 + tv.tv_usec;
-}
-
 int open_socketfd(char *hostname, char* port, int flags, int type, int (*func)(int, const struct sockaddr*, socklen_t))
 {
   int socketfd;
@@ -83,11 +73,6 @@ int fgets2(FILE* in, char* buf, size_t n)
       return count;
   }
   return count;
-}
-
-size_t request_find_slot(struct request* requests, size_t seq, size_t last, size_t size) {
-  for (; requests[last].seq != seq; last = (last + 1) % size) ;
-  return last;
 }
 
 int getintsockopt(int sockfd, int level, int optname) {
