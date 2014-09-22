@@ -170,22 +170,40 @@ int main(int argc, char **argv)
 
   SETSOCKOPT(logfile, LOG_LEVEL_L, clientfd, SOL_SOCKET, SO_PRIORITY, options.sopriority);
 
-  while (!options.requests || requests < options.requests) {
+  while (!options.requests || responses < options.requests) {
+    delta = microseconds() - lastRequest;
+
     FD_ZERO(&rfds);
+    FD_ZERO(&wfds);
+
     if (responses < requests) {
       FD_SET(clientfd, &rfds);
     }
 
-    delta = microseconds() - lastRequest;
-    FD_ZERO(&wfds);
-
-    if (delta > options.delay) {
-      FD_SET(clientfd, &wfds);
-      timeout_p = NULL;
+    if (!options.requests || requests < options.requests) {
+      /* more requests to send */
+      if (delta > options.delay) {
+        FD_SET(clientfd, &wfds);
+        timeout_p = NULL;
+      } else {
+        timeout.tv_sec = (options.delay - delta) / 1000000L;
+        timeout.tv_usec = (options.delay - delta) % 1000000L;
+        timeout_p = &timeout;
+      }
     } else {
-      timeout.tv_sec = (options.delay - delta) / 1000000L;
-      timeout.tv_usec = (options.delay - delta) % 1000000L;
-      timeout_p = &timeout;
+      if (options.cleanup && delta > options.cleanup) {
+        /* time out waiting for requests */
+        LOGF(logfile, LOG_LEVEL_Q, "dropping %lu packets\n", requests - responses);
+        break;
+      }
+
+      if (options.cleanup) {
+        timeout.tv_sec = (options.cleanup - delta) / 1000000L;
+        timeout.tv_usec = (options.cleanup - delta) % 1000000L;
+        timeout_p = &timeout;
+      } else {
+        timeout_p = NULL;
+      }
     }
 
     LOG(logfile, LOG_LEVEL_V, "waiting to send messages\n");
@@ -200,7 +218,7 @@ int main(int argc, char **argv)
       LOGF(logfile, LOG_LEVEL_V, "sent %d bytes\n", n);
       if (n == -1) {
         fprintf(stderr, "Failed to write to socket\n");
-        goto cleanup;
+        break;
       }
     }
 
@@ -209,13 +227,14 @@ int main(int argc, char **argv)
       n = recvfrom(clientfd, request, response_size, 0, NULL, NULL);
       if (n == -1) {
         fprintf(stderr, "Failed to read from socket\n");
-        goto cleanup;
+        break;
       }
       request->response_read_start = readStart;
       request->response_read_end = microseconds();
       request->response_rcvd = rcvd_microseconds(clientfd);
       LOGF(logfile, LOG_LEVEL_V, "recieved %d bytes\n", n);
 
+      ++responses;
       time_offset(request->request_write_start, request->request_read_end, request->response_write_start, request->response_read_end, &lowerOffset, &upperOffset);
       LOGF(logfile, LOG_LEVEL_Q, "seq %lu: %lu %lu %lu %lu %lu %lu %lu %lu +/- %ld %ld\n",
            request->seq,
@@ -232,7 +251,7 @@ int main(int argc, char **argv)
         );
     }
   }
-cleanup:
+
   close(clientfd);
   if (logfile) {
     fclose(logfile);
