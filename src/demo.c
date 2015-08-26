@@ -1,3 +1,4 @@
+#define MAIN
 /*
  * Copyright (c) 1980, 1992, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -42,18 +43,6 @@
 
 #include <sys/cdefs.h>
 
-__FBSDID("$FreeBSD: src/usr.bin/script/script.c,v 1.24 2004/02/15 17:30:13 cperciva Exp $");
-
-#ifndef lint
-static const char copyright[] =
-"@(#) Copyright (c) 1980, 1992, 1993\n\
-	The Regents of the University of California.  All rights reserved.\n";
-#endif
-
-#ifndef lint
-static const char sccsid[] = "@(#)script.c	8.1 (Berkeley) 6/6/93";
-#endif
-
 #include <time.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -81,8 +70,8 @@ static const char sccsid[] = "@(#)script.c	8.1 (Berkeley) 6/6/93";
 #include <util.h>
 #endif /* __APPLE__ */
 #ifdef __linux__
-#include <pty.h>
 #include <utmp.h>
+#include <pty.h>
 #endif
 
 #ifndef __dead2

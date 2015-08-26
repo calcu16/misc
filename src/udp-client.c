@@ -1,3 +1,4 @@
+#define MAIN
 #include <errno.h>
 #include <netdb.h>
 #include <stdio.h>

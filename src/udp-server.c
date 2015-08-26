@@ -1,3 +1,4 @@
+#define MAIN
 #include <pthread.h>
 #include <semaphore.h>
 #include <sys/wait.h>
