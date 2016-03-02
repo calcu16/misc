@@ -1,7 +1,3 @@
 *.o
-tcp-client
-tcp-server
-udp-client
-udp-server
-demo
-
+*.http
+/build
