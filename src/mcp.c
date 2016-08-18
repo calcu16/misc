@@ -11,8 +11,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { kHugeBlockSize = 1ull << 21 };
-
 #define ALIGN(s, a) (((s) + (a) - 1) & ~(a - 1))
 
 int
