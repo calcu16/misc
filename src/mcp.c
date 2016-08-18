@@ -74,7 +74,6 @@ main(int argc, char *argv[]) {
     n = ftruncate(fd, size);
     if (n < 0) {
       fprintf(stderr, "Failed to copy '%s' to '%s'\n", argv[i], path);
-      fprintf(stderr, "Attempting to set size to %x (aligned to %x)\n", size, kHugeBlockSize);
       perror("Could not truncate destination");
       return 1;
     }
